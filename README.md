@@ -6,7 +6,9 @@ Everything (pixel art, font, sound effects) is generated in code. No assets, no 
 
 ## Play
 
-Open `index.html` in any modern browser. That's it.
+**▶ [Play in your browser](https://dead-baron.github.io/gear-bugs/)**
+
+Or download `index.html` and open it in any modern browser. That's it.
 
 Works on desktop, tablet and phone (landscape recommended), with keyboard + mouse, a game controller, or touch.
 
