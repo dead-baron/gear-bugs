@@ -6,7 +6,7 @@ Everything (pixel art, font, sound effects) is generated in code. No assets, no 
 
 ## Play
 
-**▶ [Play in your browser](https://dead-baron.github.io/gear-bugs/)**
+**▶ [Play in your browser](https://deadbaron.com/gear-bugs/)**
 
 Or download `index.html` and open it in any modern browser. That's it.
 
