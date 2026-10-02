@@ -67,8 +67,10 @@ function loadTrystero() {
 }
 /* Trystero API shim - works with both the array-style ([send, onMessage])
    and object-style ({send, onMessage}) action APIs across versions. */
+let TR_ARRAY_API = false;      // older Trystero: makeAction returns [send, onMessage]; room.onPeerJoin(fn)
 function trAction(room, name) {
   const r = room.makeAction(name);
+  TR_ARRAY_API = Array.isArray(r);
   const seen = new WeakSet();
   // Trystero 0.25 passes (data, {peerId, metadata}); older versions pass (data, peerId)
   const wrap = fn => (data, from) => {
@@ -86,8 +88,9 @@ function trAction(room, name) {
 function trRoomEvent(room, ev, fn) {
   const recent = new Map();
   const h = id => { const t = recent.get(id); const now = nowMs(); if (t && now - t < 150) return; recent.set(id, now); fn(id); };
-  if (typeof room[ev] === 'function') { try { room[ev](h); } catch (e) {} }
-  try { room[ev] = h; } catch (e) {}
+  // 0.25+: onPeerJoin/onPeerLeave are setter properties; older versions take a callback
+  if (TR_ARRAY_API && typeof room[ev] === 'function') { try { room[ev](h); } catch (e) {} }
+  else { try { room[ev] = h; } catch (e) {} }
 }
 function trJoin(rtcConfig, roomId) {
   return Trystero.joinRoom({ appId: NET.APP_ID, rtcConfig }, roomId);
@@ -194,6 +197,8 @@ class TrysteroAdapter extends NetAdapter {
     if (this.closed) return;
     this.selfId = lib.selfId;
     await Promise.race([detectStrictNat(), sleep(600)]);
+    if (this.leaving) await this.leaving;
+    if (this.closed) return;
     const ice = await iceServers();
     this.relay = strictNet === true || this.attempt % 2 === 0;
     const rtc = this.relay ? { iceServers: ice.turn, iceTransportPolicy: 'relay' } : { iceServers: ice.all };
@@ -227,7 +232,7 @@ class TrysteroAdapter extends NetAdapter {
       const p = this.peers.get(id);
       if (p && p.slot > 0) { this.aOk.send({ v: 1, slot: p.slot }, id); return; }   // idempotent
       const slot = this.freeSlot();
-      if (this.matchStarted || slot < 0 || this.acceptJoiner === false) { this.aFull.send({ v: 1 }, id); return; }
+      if ((this.matchStarted && !this.lateJoin) || slot < 0 || this.acceptJoiner === false) { this.aFull.send({ v: 1 }, id); return; }
       this.peers.set(id, { slot, lastSeen: nowMs(), leaveT: 0 });
       this.aOk.send({ v: 1, slot }, id);
       this.emit('join', id, slot);
@@ -272,7 +277,9 @@ class TrysteroAdapter extends NetAdapter {
       this.retry();
     }
     if (this.role === 'host' && this.idleRefresh && this.joinerCount() === 0 && !this.matchStarted && this.room && now - this.roomT > 60000) {
-      this.leaveRoom(); this.joinRoom(this.roomId, this.rtc); this.roomT = now;   // recover from dropped relay sockets
+      this.roomT = now; this.leaveRoom();                                           // recover from dropped relay sockets
+      const id = this.roomId, rtc = this.rtc;
+      (this.leaving || Promise.resolve()).then(() => { if (!this.closed && !this.room) this.joinRoom(id, rtc); });
     }
   }
   dropPeer(id, why) {
@@ -284,7 +291,10 @@ class TrysteroAdapter extends NetAdapter {
   }
   publish(obj) { if (this.aP && this.room) { try { this.aP.send(obj); } catch (e) {} } }
   sendBye() { this.publish({ bye: 1 }); }
-  leaveRoom() { try { if (this.room) this.room.leave(); } catch (e) {} this.room = null; this.aP = null; }
+  leaveRoom() {
+    try { if (this.room) { const p = this.room.leave(); this.leaving = Promise.resolve(p).catch(() => {}).then(() => { this.leaving = null; }); } } catch (e) {}
+    this.room = null; this.aP = null;
+  }
   retry() { this.leaveRoom(); this.peers.clear(); this.connect(this.code, this.role); }
   rehost() { this.leaveRoom(); this.peers.clear(); const c = randomCode(); this.attempt = 0; this.emit('code', c); this.connect(c, 'host'); }
   close() {
@@ -320,6 +330,7 @@ class QuickMatchAdapter extends TrysteroAdapter {
     this.lobbyCode = null; this.lobbyOpen = false; this.badLobbies = new Map();
     this.poolEnterT = 0; this.lastSeekT = 0; this.poolAttempts = 0; this.joinT = 0;
     this.idleRefresh = false;
+    this.lateJoin = true;               // players may join mid-match (they spectate until the next round)
   }
   async search() {
     if (this.closed) return;
@@ -333,6 +344,8 @@ class QuickMatchAdapter extends TrysteroAdapter {
   }
   async enterPool() {
     await Promise.race([detectStrictNat(), sleep(600)]);
+    if (this.poolLeaving) await this.poolLeaving;
+    if (this.closed || this.pool) return;
     const ice = await iceServers();
     const rtc = strictNet === true ? { iceServers: ice.turn, iceTransportPolicy: 'relay' } : { iceServers: ice.all };  // the pool never forces relay otherwise
     this.poolAttempts++;
@@ -348,12 +361,16 @@ class QuickMatchAdapter extends TrysteroAdapter {
   }
   players() { return 1 + this.joinerCount(); }
   seekMsg() {
-    const lobby = this.mode === 'lobby' && this.lobbyOpen && !this.matchStarted && this.players() < 4;
+    const lobby = this.mode === 'lobby' && this.lobbyOpen && this.players() < 4;
     return { v: 1, t: this.waitStart, lob: lobby ? this.lobbyCode : 0, n: lobby ? this.players() : 0, done: this.mode === 'joining' || this.mode === 'linked' || (this.mode === 'lobby' && !lobby) ? 1 : 0 };
   }
   broadcastSeek() { if (this.pool && this.qSeek) { try { this.qSeek.send(this.seekMsg()); } catch (e) {} } this.lastSeekT = nowMs(); }
   leavePool() {
-    if (this.pool) { try { this.qSeek.send({ v: 1, t: this.waitStart, done: 1 }); } catch (e) {} const p = this.pool; setTimeout(() => { try { p.leave(); } catch (e) {} }, 150); }
+    if (this.pool) {
+      try { this.qSeek.send({ v: 1, t: this.waitStart, done: 1 }); } catch (e) {}
+      const p = this.pool;
+      this.poolLeaving = sleep(150).then(() => p.leave()).catch(() => {}).then(() => { this.poolLeaving = null; });
+    }
     this.pool = null; this.seekers.clear();
   }
   onSeek(d, id) {
@@ -382,7 +399,7 @@ class QuickMatchAdapter extends TrysteroAdapter {
       }
     } else if (this.mode === 'lobby') {
       // two lobbies opened at once: an empty one folds into the lower host id's lobby
-      if (this.joinerCount() === 0 && !this.matchStarted) {
+      if (this.joinerCount() === 0) {
         const other = this.openLobbies(now).filter(s => s.lob !== this.lobbyCode && String(s.id) < String(this.selfId)).sort((a, b) => b.n - a.n)[0];
         if (other) { this.leaveRoom(); this.peers.clear(); this.joinLobby(other.lob); }
       }

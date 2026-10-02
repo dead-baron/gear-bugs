@@ -33,7 +33,7 @@ The difficulties are **Easy, Medium, Hard and HELL MODE**. In HELL MODE enemies 
 
 ## VS mode (up to 4 players)
 
-- **Quick Play** drops you into an open lobby with other players and keeps searching for more while you practise on a warm-up field. The match starts as soon as everyone presses **START**, or 30 seconds after a second player arrives. Bots fill any empty slots.
+- **Quick Play** puts you in a lobby with other real players (no bots) and keeps searching for more, up to 4. Once a second player arrives, the match starts after 60 seconds, or as soon as everyone presses **START**. Players who join mid-match spectate until the round ends, then play from the next round.
 - **Private Room** lets you host a room with a 4-letter code or an invite link (`?room=CODE`), or play an offline bot match.
 - The modes are **1v1, 2v2 Teams and 4-player Free-For-All**. A match is 4 rounds: Field → Meadow → Island → Barn.
 - The first to 5 flies powers up. A powered web freezes a rival so you can bite them out of the round. Webs fired before you're powered up only slow rivals down.

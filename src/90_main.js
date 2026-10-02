@@ -13,7 +13,7 @@ function setScene(name) {
 }
 function isGameplay() {
   if (scene === 'level') return true;
-  if (scene === 'vs') return VS.sub === 'searching' || (VS.kind === 'quick' && !VS.botWhileWaiting && !!VS.warm && (VS.sub === 'wait' || VS.sub === 'connecting')) || (VS.sub === 'match' && VS.phase !== 'final' && !!VS.W);
+  if (scene === 'vs') return VS.sub === 'match' && VS.phase !== 'final' && !!VS.W;
   return false;
 }
 function rotateBlocked() { return isTouchDevice && window.innerHeight > window.innerWidth && !ignoreRotate; }
@@ -89,7 +89,7 @@ function backAction() {
     case 'gameover': Overworld.enter(Campaign.level); setScene('overworld'); break;
     case 'ending': setScene('menu'); break;
     case 'overworld': setScene('menu'); break;
-    case 'vs': if (VS.sub === 'wait' || VS.sub === 'connecting') VS.leave(); break;
+    case 'vs': if (VS.sub === 'wait' || VS.sub === 'connecting' || VS.sub === 'searching') VS.leave(); break;
     default: return;
   }
   SFX.play('back');

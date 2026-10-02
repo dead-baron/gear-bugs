@@ -53,7 +53,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-02T04:56:15Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-02T05:21:09Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -3233,8 +3233,10 @@ function loadTrystero() {
 }
 /* Trystero API shim - works with both the array-style ([send, onMessage])
    and object-style ({send, onMessage}) action APIs across versions. */
+let TR_ARRAY_API = false;      // older Trystero: makeAction returns [send, onMessage]; room.onPeerJoin(fn)
 function trAction(room, name) {
   const r = room.makeAction(name);
+  TR_ARRAY_API = Array.isArray(r);
   const seen = new WeakSet();
   // Trystero 0.25 passes (data, {peerId, metadata}); older versions pass (data, peerId)
   const wrap = fn => (data, from) => {
@@ -3252,8 +3254,9 @@ function trAction(room, name) {
 function trRoomEvent(room, ev, fn) {
   const recent = new Map();
   const h = id => { const t = recent.get(id); const now = nowMs(); if (t && now - t < 150) return; recent.set(id, now); fn(id); };
-  if (typeof room[ev] === 'function') { try { room[ev](h); } catch (e) {} }
-  try { room[ev] = h; } catch (e) {}
+  // 0.25+: onPeerJoin/onPeerLeave are setter properties; older versions take a callback
+  if (TR_ARRAY_API && typeof room[ev] === 'function') { try { room[ev](h); } catch (e) {} }
+  else { try { room[ev] = h; } catch (e) {} }
 }
 function trJoin(rtcConfig, roomId) {
   return Trystero.joinRoom({ appId: NET.APP_ID, rtcConfig }, roomId);
@@ -3360,6 +3363,8 @@ class TrysteroAdapter extends NetAdapter {
     if (this.closed) return;
     this.selfId = lib.selfId;
     await Promise.race([detectStrictNat(), sleep(600)]);
+    if (this.leaving) await this.leaving;
+    if (this.closed) return;
     const ice = await iceServers();
     this.relay = strictNet === true || this.attempt % 2 === 0;
     const rtc = this.relay ? { iceServers: ice.turn, iceTransportPolicy: 'relay' } : { iceServers: ice.all };
@@ -3393,7 +3398,7 @@ class TrysteroAdapter extends NetAdapter {
       const p = this.peers.get(id);
       if (p && p.slot > 0) { this.aOk.send({ v: 1, slot: p.slot }, id); return; }   // idempotent
       const slot = this.freeSlot();
-      if (this.matchStarted || slot < 0 || this.acceptJoiner === false) { this.aFull.send({ v: 1 }, id); return; }
+      if ((this.matchStarted && !this.lateJoin) || slot < 0 || this.acceptJoiner === false) { this.aFull.send({ v: 1 }, id); return; }
       this.peers.set(id, { slot, lastSeen: nowMs(), leaveT: 0 });
       this.aOk.send({ v: 1, slot }, id);
       this.emit('join', id, slot);
@@ -3438,7 +3443,9 @@ class TrysteroAdapter extends NetAdapter {
       this.retry();
     }
     if (this.role === 'host' && this.idleRefresh && this.joinerCount() === 0 && !this.matchStarted && this.room && now - this.roomT > 60000) {
-      this.leaveRoom(); this.joinRoom(this.roomId, this.rtc); this.roomT = now;   // recover from dropped relay sockets
+      this.roomT = now; this.leaveRoom();                                           // recover from dropped relay sockets
+      const id = this.roomId, rtc = this.rtc;
+      (this.leaving || Promise.resolve()).then(() => { if (!this.closed && !this.room) this.joinRoom(id, rtc); });
     }
   }
   dropPeer(id, why) {
@@ -3450,7 +3457,10 @@ class TrysteroAdapter extends NetAdapter {
   }
   publish(obj) { if (this.aP && this.room) { try { this.aP.send(obj); } catch (e) {} } }
   sendBye() { this.publish({ bye: 1 }); }
-  leaveRoom() { try { if (this.room) this.room.leave(); } catch (e) {} this.room = null; this.aP = null; }
+  leaveRoom() {
+    try { if (this.room) { const p = this.room.leave(); this.leaving = Promise.resolve(p).catch(() => {}).then(() => { this.leaving = null; }); } } catch (e) {}
+    this.room = null; this.aP = null;
+  }
   retry() { this.leaveRoom(); this.peers.clear(); this.connect(this.code, this.role); }
   rehost() { this.leaveRoom(); this.peers.clear(); const c = randomCode(); this.attempt = 0; this.emit('code', c); this.connect(c, 'host'); }
   close() {
@@ -3486,6 +3496,7 @@ class QuickMatchAdapter extends TrysteroAdapter {
     this.lobbyCode = null; this.lobbyOpen = false; this.badLobbies = new Map();
     this.poolEnterT = 0; this.lastSeekT = 0; this.poolAttempts = 0; this.joinT = 0;
     this.idleRefresh = false;
+    this.lateJoin = true;               // players may join mid-match (they spectate until the next round)
   }
   async search() {
     if (this.closed) return;
@@ -3499,6 +3510,8 @@ class QuickMatchAdapter extends TrysteroAdapter {
   }
   async enterPool() {
     await Promise.race([detectStrictNat(), sleep(600)]);
+    if (this.poolLeaving) await this.poolLeaving;
+    if (this.closed || this.pool) return;
     const ice = await iceServers();
     const rtc = strictNet === true ? { iceServers: ice.turn, iceTransportPolicy: 'relay' } : { iceServers: ice.all };  // the pool never forces relay otherwise
     this.poolAttempts++;
@@ -3514,12 +3527,16 @@ class QuickMatchAdapter extends TrysteroAdapter {
   }
   players() { return 1 + this.joinerCount(); }
   seekMsg() {
-    const lobby = this.mode === 'lobby' && this.lobbyOpen && !this.matchStarted && this.players() < 4;
+    const lobby = this.mode === 'lobby' && this.lobbyOpen && this.players() < 4;
     return { v: 1, t: this.waitStart, lob: lobby ? this.lobbyCode : 0, n: lobby ? this.players() : 0, done: this.mode === 'joining' || this.mode === 'linked' || (this.mode === 'lobby' && !lobby) ? 1 : 0 };
   }
   broadcastSeek() { if (this.pool && this.qSeek) { try { this.qSeek.send(this.seekMsg()); } catch (e) {} } this.lastSeekT = nowMs(); }
   leavePool() {
-    if (this.pool) { try { this.qSeek.send({ v: 1, t: this.waitStart, done: 1 }); } catch (e) {} const p = this.pool; setTimeout(() => { try { p.leave(); } catch (e) {} }, 150); }
+    if (this.pool) {
+      try { this.qSeek.send({ v: 1, t: this.waitStart, done: 1 }); } catch (e) {}
+      const p = this.pool;
+      this.poolLeaving = sleep(150).then(() => p.leave()).catch(() => {}).then(() => { this.poolLeaving = null; });
+    }
     this.pool = null; this.seekers.clear();
   }
   onSeek(d, id) {
@@ -3548,7 +3565,7 @@ class QuickMatchAdapter extends TrysteroAdapter {
       }
     } else if (this.mode === 'lobby') {
       // two lobbies opened at once: an empty one folds into the lower host id's lobby
-      if (this.joinerCount() === 0 && !this.matchStarted) {
+      if (this.joinerCount() === 0) {
         const other = this.openLobbies(now).filter(s => s.lob !== this.lobbyCode && String(s.id) < String(this.selfId)).sort((a, b) => b.n - a.n)[0];
         if (other) { this.leaveRoom(); this.peers.clear(); this.joinLobby(other.lob); }
       }
@@ -3720,27 +3737,14 @@ const VS = {
     this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0 };
   },
   blankScore() { return { pts: 0, fl: 0, kills: 0, npc: 0, wins: 0, rp: 0 }; },
-  makeWarmup() {
-    const biome = Math.floor(Math.random() * 4);
-    const W = new World({ mode: 'warmup', biome, seed: (Math.random() * 1e9) >>> 0, D: VS_DIFF, authority: true, rules: {
-      onFlyCollected: (sp, f) => { floater(W, f.x, f.y - 10, 'WARM-UP', '#ffd23f'); },
-      onSpiderDead: (sp) => { setTimeout(() => { if (this.warm === W) { const s = W.L.spawns[0]; const nb = new SpiderBody('warm', s.x, s.y, { style: save.style, name: 'YOU' }); W.spiders = [nb]; this.warmMe = nb; } }, 1200); },
-    } });
-    const s = W.L.spawns[0];
-    this.warmMe = new SpiderBody('warm', s.x, s.y, { style: save.style, name: 'YOU' });
-    W.spiders.push(this.warmMe); W.localId = 'warm';
-    this.warm = W; this.warmFlyT = 0;
-  },
   startQuick() {
-    this.reset(); this.kind = 'quick'; this.sub = 'searching';
-    this.makeWarmup();
+    this.reset(); this.kind = 'quick'; this.sub = 'searching'; this.mode = 'ffa';
     const q = this.searchNet = new QuickMatchAdapter();
     this.wireNet(q);
     q.on('matched', (code, role) => this.onMatched(q, code, role));
     q.on('requeue', () => {
       // couldn't get into that lobby (full / unreachable): keep searching
-      if (this.botWhileWaiting) return;
-      this.sub = 'searching'; this.isHost = false; this.roster = []; this.ready = false; this.autoT = -1;
+      this.sub = 'searching'; this.isHost = false; this.roster = []; this.ready = false; this.autoT = -1; this.W = null; this.me = null; this.phase = 'wait';
       this.flash('LOBBY UNAVAILABLE - STILL SEARCHING');
     });
     q.search();
@@ -3773,27 +3777,14 @@ const VS = {
     for (let s = 1; s <= 3; s++) this.addBot(s);
     track('game_start', { mode: 'bots' });
   },
-  startBotWhileWaiting() {
-    if (this.sub !== 'searching') return;
-    this.botWhileWaiting = true;
-    const n = this.net = new NullAdapter(); n.connect('BOTS', 'host');
-    this.wireNet(n);
-    this.isHost = true; this.mySlot = 0; this.myId = 'local';
-    this.initHostLobby();
-    for (let s = 1; s <= 3; s++) this.addBot(s);
-    this.mode = 'ffa';
-    this.sub = 'wait';
-    this.startMatch();
-    track('bot_while_waiting', { secs: Math.round((nowMs() - this.waitStart) / 1000) });
-  },
   onMatched(q, code, role) {
-    // a real match was found: drop any bot game and use the pool link
-    if (this.botWhileWaiting) { this.botWhileWaiting = false; if (this.net && this.net !== q) { try { this.net.close(); } catch (e) {} } }
+    // a lobby was found / opened: use the pool link for it
     this.W = null; this.me = null; this.bots = new Map(); this.phase = 'wait';
     this.scores = [0, 1, 2, 3].map(() => this.blankScore());
     this.net = q; this.code = code;
     this.isHost = role === 'host';
     this.ready = false; this.autoT = -1;
+    this.mode = 'ffa';
     if (this.isHost) { this.sub = 'wait'; this.mySlot = 0; this.initHostLobby(); this.flash('PLAYERS FOUND - LOBBY OPEN'); }
     else { this.sub = 'connecting'; this.roster = []; this.flash('LOBBY FOUND - JOINING'); }
     SFX.play('join');
@@ -3836,6 +3827,15 @@ const VS = {
     this.autoT = -1;
   },
   humans() { return this.roster.filter(r => !r.bot); },
+  active() { return this.roster.filter(r => !r.spec); },           // players in the current round (not spectating)
+  backToLobby(msg) {
+    this.phase = 'wait'; this.sub = 'wait'; this.W = null; this.me = null; this.bots = new Map();
+    this.ready = false; this.autoT = -1; this.roundRes = null;
+    for (const r of this.roster) { r.spec = false; r.ready = false; }
+    this.scores = [0, 1, 2, 3].map(() => this.blankScore());
+    if (this.net) this.net.matchStarted = false;
+    if (msg) this.flash(msg);
+  },
   addBot(slot) {
     if (slot === undefined) { const used = new Set(this.roster.map(r => r.slot)); for (let s = 1; s <= 3; s++) if (!used.has(s)) { slot = s; break; } }
     if (slot === undefined || this.roster.some(r => r.slot === slot)) return;
@@ -3846,9 +3846,11 @@ const VS = {
   onJoin(n, id, slot) {
     if (n !== this.net || !this.isHost) return;
     this.roster = this.roster.filter(r => r.slot !== slot && r.id !== id);
-    this.roster.push({ slot, id, name: 'P' + (slot + 1), style: { c: SLOT_COLORS[slot], h: 0, p: 0 }, bot: false });
+    const midMatch = this.phase !== 'wait' && this.phase !== 'final';
+    this.roster.push({ slot, id, name: 'P' + (slot + 1), style: { c: SLOT_COLORS[slot], h: 0, p: 0 }, bot: false, spec: midMatch });
     this.roster.sort((a, b) => a.slot - b.slot);
-    SFX.play('join'); this.flash('P' + (slot + 1) + ' JOINED');
+    if (this.phase !== 'wait') this.scores[slot] = this.blankScore();
+    SFX.play('join'); this.flash('P' + (slot + 1) + (midMatch ? ' JOINED - PLAYS NEXT ROUND' : ' JOINED'));
     if (this.kind === 'quick' && this.phase === 'wait' && this.autoT >= 0) this.autoT = Math.max(this.autoT, 15);   // give the newcomer time
     if (this.kind !== 'quick' && this.humans().length >= 4 && this.phase === 'wait') this.autoT = Math.min(this.autoT < 0 ? 3 : this.autoT, 3);
   },
@@ -3860,6 +3862,12 @@ const VS = {
     const r = this.roster.find(x => x.id === id);
     if (!r) return;
     SFX.play('leave'); this.flash(r.name + ' LEFT');
+    if (this.kind === 'quick') {
+      this.roster = this.roster.filter(x => x !== r);
+      if (W) W.remotes.delete(id);
+      if (this.phase !== 'wait' && this.phase !== 'final' && this.active().length < 2) this.backToLobby('NOT ENOUGH PLAYERS - BACK TO THE LOBBY');
+      return;
+    }
     if (this.phase === 'wait' || this.phase === 'final') {
       this.roster = this.roster.filter(x => x !== r);
       if (this.net && this.net.peers && this.kind !== 'bots') this.net.matchStarted = false;   // reopen a clean slot
@@ -3905,9 +3913,9 @@ const VS = {
     if (!this.isHost) return;
     // fill / trim participants for the chosen mode
     if (this.mode === '1v1') { while (this.roster.length > 2) { const i = this.roster.findIndex(r => r.bot); if (i < 0) break; this.roster.splice(i, 1); } if (this.roster.length < 2) this.addBot(); }
-    else if (this.mode === '2v2' || this.kind === 'quick') { while (this.roster.length < 4) this.addBot(); }
+    else if (this.kind === 'quick') { this.mode = 'ffa'; this.roster = this.roster.filter(r => !r.bot); }
+    else if (this.mode === '2v2') { while (this.roster.length < 4) this.addBot(); }
     else if (this.roster.length < 2) this.addBot();
-    if (this.kind === 'quick' && this.net && this.net.closeLobby) this.net.closeLobby();
     if (this.net) this.net.matchStarted = true;
     this.effectiveStyles();
     this.scores = [0, 1, 2, 3].map(() => this.blankScore());
@@ -3918,6 +3926,7 @@ const VS = {
     track('game_start', { mode: 'vs_' + this.mode, players: this.humans().length });
   },
   beginRound(rn) {
+    for (const r of this.roster) r.spec = false;
     this.rn = rn; this.phase = 'intro'; this.phaseT = VS_INTRO;
     for (const s of this.scores) { s.fl = 0; s.rp = 0; }
     this.npcHits = {}; this.processed = {}; this.credited = {}; this.respawns = []; this.biteCD = {};
@@ -3931,6 +3940,7 @@ const VS = {
     const sp = W.L.spawns[this.mySlot] || W.L.spawns[0];
     this.me = new SpiderBody(this.myId, sp.x, sp.y, { slot: this.mySlot, style: meR.eff || save.style, name: meR.name, team: this.teamOf(this.mySlot), facing: sp.x < 320 ? 1 : -1 });
     W.spiders.push(this.me); W.localId = this.myId;
+    if (meR.spec) { const m = this.me; m.spectator = true; m.alive = false; m.hp = 0; m.x = -999; m.y = 9999; m.vx = m.vy = 0; }
     this.applied = {}; this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0 }; this.claims = [];
     this.bots = new Map();
     if (this.isHost) {
@@ -3943,7 +3953,8 @@ const VS = {
       for (let i = 0; i < 3; i++) W.spawnFly();
       this.flyT = 1;
     }
-    this.banner = { text: 'ROUND ' + (rn + 1) + '/4', sub: BIOMES[rn].name + ' - FIRST TO 5 FLIES GETS THE POWER', t: VS_INTRO, max: VS_INTRO, color: '#ffd23f' };
+    this.banner = meR.spec ? { text: 'SPECTATING', sub: 'YOU JOIN AT THE START OF THE NEXT ROUND', t: 3, max: 3, color: '#9ad0ff' }
+                           : { text: 'ROUND ' + (rn + 1) + '/4', sub: BIOMES[rn].name + ' - FIRST TO 5 FLIES GETS THE POWER', t: VS_INTRO, max: VS_INTRO, color: '#ffd23f' };
     SFX.play('round');
   },
   spawnHazard(rn) {
@@ -4022,7 +4033,7 @@ const VS = {
   },
   aliveBySlot() {
     const out = {};
-    for (const r of this.roster) {
+    for (const r of this.active()) {
       if (r.slot === this.mySlot) out[r.slot] = this.me ? this.me.alive : true;
       else if (r.bot) { const b = this.bots.get(r.slot); out[r.slot] = b ? b.body.alive : false; }
       else { const p = this.pres.get(r.id); out[r.slot] = p && p.dr === this.rn ? !!p.al : true; }
@@ -4034,8 +4045,8 @@ const VS = {
     if (this.phase === 'intro' && this.phaseT <= 0) { this.phase = 'play'; this.phaseT = VS_ROUND_TIME; SFX.play('go'); }
     else if (this.phase === 'play') {
       const alive = this.aliveBySlot();
-      const teams = new Set(this.roster.map(r => this.teamOf(r.slot)));
-      const aliveTeams = new Set(this.roster.filter(r => alive[r.slot]).map(r => this.teamOf(r.slot)));
+      const teams = new Set(this.active().map(r => this.teamOf(r.slot)));
+      const aliveTeams = new Set(this.active().filter(r => alive[r.slot]).map(r => this.teamOf(r.slot)));
       if ((teams.size >= 2 && aliveTeams.size <= 1) || this.phaseT <= 0) this.endRound(alive, aliveTeams);
       // keep flies buzzing
       if (this.W.flies.filter(f => !f.heart).length < 4) { this.flyT -= dt; if (this.flyT <= 0) { this.W.spawnFly(); this.flyT = 1.5; } }
@@ -4052,14 +4063,14 @@ const VS = {
     if (aliveTeams.size === 1 && this.phaseT > 0) { winTeam = [...aliveTeams][0]; why = 'LAST SPIDER STANDING'; }
     else {
       const tp = {};
-      for (const r of this.roster) { const t = this.teamOf(r.slot); tp[t] = (tp[t] || 0) + this.scores[r.slot].rp + (alive[r.slot] ? 1 : 0); }
+      for (const r of this.active()) { const t = this.teamOf(r.slot); tp[t] = (tp[t] || 0) + this.scores[r.slot].rp + (alive[r.slot] ? 1 : 0); }
       const sorted = Object.entries(tp).sort((a, b) => b[1] - a[1]);
       if (sorted.length && (sorted.length === 1 || sorted[0][1] > sorted[1][1])) { winTeam = +sorted[0][0]; why = 'TIME UP - MOST POINTS'; }
       else why = 'TIME UP - TIED';
     }
     let res = 'DRAW!';
     if (winTeam >= 0) {
-      for (const r of this.roster) if (this.teamOf(r.slot) === winTeam) this.scores[r.slot].wins++;
+      for (const r of this.active()) if (this.teamOf(r.slot) === winTeam) this.scores[r.slot].wins++;
       res = this.mode === '2v2' ? TEAM_NAMES[winTeam] + ' WINS!' : ((this.roster.find(r => r.slot === winTeam) || {}).name || '?') + ' WINS THE ROUND!';
     }
     this.roundRes = { res, why, team: winTeam };
@@ -4100,7 +4111,7 @@ const VS = {
   buildWorld() {
     const m = {
       ph: this.phase, rn: this.rn, t: Math.round(this.phaseT * 10) / 10, mode: this.mode, sd: this.seeds, cd: this.autoT,
-      ro: this.roster.map(r => [r.slot, r.id, r.name, (r.eff || r.style).c, (r.eff || r.style).h, (r.eff || r.style).p, r.bot ? 1 : 0, (r.slot === this.mySlot ? this.ready : r.ready) ? 1 : 0]),
+      ro: this.roster.map(r => [r.slot, r.id, r.name, (r.eff || r.style).c, (r.eff || r.style).h, (r.eff || r.style).p, r.bot ? 1 : 0, (r.slot === this.mySlot ? this.ready : r.ready) ? 1 : 0, r.spec ? 1 : 0]),
       sc: this.scores.map(s => [s.pts, s.fl, s.kills, s.npc, s.wins, s.rp]),
       res: this.roundRes ? [this.roundRes.res, this.roundRes.why, this.roundRes.team] : 0, rc: this.rematchClosed ? 1 : 0,
     };
@@ -4181,11 +4192,12 @@ const VS = {
     if (!m) return;
     const prevPhase = this.phase, prevRn = this.rn;
     this.mode = m.mode; this.seeds = m.sd || []; this.autoT = m.cd;
-    this.roster = (m.ro || []).map(a => ({ slot: a[0], id: a[1], name: a[2], style: { c: a[3], h: a[4], p: a[5] }, eff: { c: a[3], h: a[4], p: a[5] }, bot: !!a[6], ready: !!a[7] }));
+    this.roster = (m.ro || []).map(a => ({ slot: a[0], id: a[1], name: a[2], style: { c: a[3], h: a[4], p: a[5] }, eff: { c: a[3], h: a[4], p: a[5] }, bot: !!a[6], ready: !!a[7], spec: !!a[8] }));
     (m.sc || []).forEach((a, i) => { this.scores[i] = { pts: a[0], fl: a[1], kills: a[2], npc: a[3], wins: a[4], rp: a[5] }; });
     this.roundRes = m.res ? { res: m.res[0], why: m.res[1], team: m.res[2] } : null;
     this.rematchClosed = !!m.rc;
     this.phase = m.ph; this.rn = m.rn; this.phaseT = m.t;
+    if (m.ph === 'wait' && this.sub === 'match') { this.sub = 'wait'; this.W = null; this.me = null; this.ready = false; }
     if (m.ph !== 'wait' && m.ph !== 'final') this.sub = 'match';
     if (m.ph === 'final' && this.sub !== 'closed') this.sub = 'match';
     if ((m.ph === 'intro' || m.ph === 'play' || m.ph === 'result') && (!this.W || prevRn !== m.rn || (prevPhase === 'final' || prevPhase === 'wait') || this.W.biome !== m.rn)) this.buildRoundWorld();
@@ -4239,28 +4251,16 @@ const VS = {
     if (this.msgT > 0) this.msgT -= dt;
     if (shakeT > 0) { shakeT -= dt; if (shakeT <= 0) shakeMag = 0; }
     // searching: the lobby is a playable warm-up field
-    const quickLobby = this.kind === 'quick' && (this.sub === 'wait' || this.sub === 'connecting') && this.warm && !this.botWhileWaiting;
-    if (this.sub === 'searching' || quickLobby) {
-      if (this.sub === 'searching') this.searchT += dt;
-      const W = this.warm; W.activate();
-      W.aim = c.aim;
-      W.step(dt, s => s === this.warmMe ? c : NO_CONTROLS);
-      if (W.flies.length < 4) { this.warmFlyT -= dt; if (this.warmFlyT <= 0) { W.spawnFly(); this.warmFlyT = 1.2; } }
-      if (W.enemies.length === 0 && Math.random() < dt * 0.05) { const b = new Bee(Math.random() < 0.5 ? -10 : REF_W + 10, 60 + Math.random() * 100, null); b.vx = b.x < 0 ? 60 : -60; W.enemies.push(b); }
-      for (const e of W.enemies) if (e.type === 'bee' && (e.x < -30 || e.x > REF_W + 30)) e.alive = false;
-      W.enemies = W.enemies.filter(e => e.alive);
-      if (!quickLobby) return;
-      if (this.sub === 'wait' && (Input.pressed.Enter || gp.pressed(3))) this.toggleReady();
-    }
+    if (this.sub === 'searching') { this.searchT += dt; return; }
     if (this.sub === 'connecting' || this.sub === 'closed') return;
     if (this.sub === 'wait' && this.isHost) {
       // lobby auto-start rules
       const h = this.humans().length;
       if (this.kind === 'quick') {
-        // everyone pressed START -> go now; otherwise start 30 s after a second player arrives
-        const allReady = this.humans().every(r => r.slot === this.mySlot ? this.ready : r.ready);
-        if (allReady && this.ready) { if (this.autoT < 0 || this.autoT > 1.2) { this.autoT = 1.2; this.allReady = true; SFX.play('go'); } }
-        else { this.allReady = false; if (h >= 2 && this.autoT < 0) this.autoT = 30; else if (h < 2) this.autoT = -1; }
+        // everyone pressed START -> go now; otherwise start 60 s after a second player arrives (no bots)
+        const allReady = h >= 2 && this.humans().every(r => r.slot === this.mySlot ? this.ready : r.ready);
+        if (allReady) { if (this.autoT < 0 || this.autoT > 1.2) { this.autoT = 1.2; this.allReady = true; SFX.play('go'); } }
+        else { this.allReady = false; if (h >= 2 && this.autoT < 0) this.autoT = 60; else if (h < 2) this.autoT = -1; }
         if (this.autoT >= 0) { this.autoT -= dt; if (this.autoT <= 0) { this.autoT = -1; this.startMatch(); } }
       } else if (this.kind !== 'bots') {
         if (h >= 4 && this.autoT < 0) this.autoT = 3;
@@ -4310,8 +4310,7 @@ const VS = {
 
   /* ---------------- rendering ---------------- */
   draw() {
-    if (this.sub === 'searching') { this.warm.draw(); this.drawSearching(); return; }
-    if (this.kind === 'quick' && (this.sub === 'wait' || this.sub === 'connecting') && this.warm && !this.botWhileWaiting) { this.warm.draw(); this.drawQuickLobby(); return; }
+    if (this.kind === 'quick' && (this.sub === 'searching' || this.sub === 'connecting' || this.sub === 'wait')) { drawMenuBackdrop(); this.drawQuickLobby(); return; }
     if (this.sub === 'connecting' || (this.sub === 'closed' && !this.W)) { drawMenuBackdrop(); this.drawConnecting(); return; }
     if (this.sub === 'wait') { drawMenuBackdrop(); this.drawLobby(); return; }
     if (!this.W) { drawMenuBackdrop(); this.drawConnecting(); return; }
@@ -4332,7 +4331,8 @@ const VS = {
       const sc = this.scores[r.slot] || this.blankScore();
       const col = SPIDER_COLORS[(r.eff || r.style).c % 6].ui;
       let al = true;
-      if (alive) al = alive[r.slot];
+      if (r.spec) al = false;
+      else if (alive) al = alive[r.slot];
       else if (r.slot === this.mySlot) al = this.me ? this.me.alive : true;
       else { const rs = this.W.remotes.get(r.id); al = rs ? rs.alive : true; }
       panel(x + 1, 3, cw - 2, 26, 0.75);
@@ -4340,7 +4340,8 @@ const VS = {
       drawText(r.name + (r.slot === this.mySlot ? '*' : ''), x + 8, 6, 1, al ? col : '#6a6a7a');
       drawText(String(sc.pts), x + cw - 6, 6, 1, '#ffffff', 'right');
       for (let i = 0; i < 5; i++) { if (i < sc.fl) pxCircle(ctx, x + 11 + i * 9, 21, 3, '#ffd23f'); else pxCircle(ctx, x + 11 + i * 9, 21, 2, '#3b2b63'); }
-      if (!al) drawText('OUT', x + cw - 6, 17, 1, '#ff5a7a', 'right');
+      if (r.spec) drawText('NEXT', x + cw - 6, 17, 1, '#9ad0ff', 'right');
+      else if (!al) drawText('OUT', x + cw - 6, 17, 1, '#ff5a7a', 'right');
       else if (sc.fl >= 5) drawText('PWR', x + cw - 6, 17, 1, Math.floor(T * 4) % 2 ? '#ffd23f' : '#fff3a0', 'right');
       else drawText('W' + sc.wins, x + cw - 6, 17, 1, '#bba8ff', 'right');
       x += cw;
@@ -4352,7 +4353,8 @@ const VS = {
     if (me) {
       for (let i = 0; i < me.maxHp; i++) drawHeart(8 + i * 14, BH - 18, 1.5, i < me.hp);
       let st = '';
-      if (!me.alive) st = 'ELIMINATED - SPECTATING';
+      if (me.spectator) st = 'SPECTATING - YOU JOIN NEXT ROUND';
+      else if (!me.alive) st = 'ELIMINATED - SPECTATING';
       else if (me.frozenT > 0 || me.stunT > 0) st = 'MASH TO BREAK FREE!';
       else if (me.slowT > 0) st = 'SLOWED!';
       else if (me.powered) st = 'POWERED! WEB + BITE RIVALS';
@@ -4410,74 +4412,51 @@ const VS = {
     SFX.play(this.ready ? 'confirm' : 'back');
     this.publishTick(1);
   },
-  overlayButtons() {
-    if (this.sub === 'searching') return this.searchButtons();
-    if (this.kind !== 'quick' || this.botWhileWaiting) return [];
-    if (this.sub === 'connecting') return [{ label: 'LEAVE', x: BW - 52, y: 18, w: 84, h: 20, action: () => this.leave() }];
-    if (this.sub === 'wait') {
-      const alone = this.roster.filter(r => !r.bot).length < 2;
-      return [
-        { label: this.ready ? 'READY! (UNDO)' : alone ? 'START WITH BOTS' : 'START', x: BW - 78, y: 18, w: 136, h: 22, pill: !this.ready, action: () => this.toggleReady() },
-        { label: 'LEAVE', x: BW - 78, y: 46, w: 136, h: 18, action: () => this.leave() },
-      ];
-    }
-    return [];
+  overlayButtons() { return []; },
+  quickButtons() {
+    const y = BH - 30, h = this.roster.filter(r => !r.bot).length;
+    const canReady = this.sub === 'wait' && h >= 2;
+    return [
+      { label: this.ready ? 'READY! (UNDO)' : 'START', x: BW / 2 + 80, y, w: 150, h: 24, disabled: !canReady, action: () => { if (canReady) this.toggleReady(); } },
+      { label: 'LEAVE', x: BW / 2 - 80, y, w: 140, h: 24, action: () => this.leave() },
+    ];
   },
   drawQuickLobby() {
-    const pw = Math.min(330, BW - 170), px = 6;
-    const ro = this.roster.slice().sort((a, b) => a.slot - b.slot);
-    const ph = this.sub === 'connecting' ? 38 : 50 + 4 * 11;
-    panel(px, 6, pw, ph, 0.82);
+    dim(0.45);
+    drawText('QUICK PLAY', BW / 2, 14, 3, '#ffd23f', 'center', null, '#140c26');
     const dots = '.'.repeat(1 + Math.floor(T * 2) % 3);
-    if (this.sub === 'connecting') {
-      drawText('JOINING LOBBY' + dots, px + 8, 11, 1, '#ffd23f');
-      drawText(this.net ? this.net.report() : '', px + 8, 24, 1, '#9a90c0');
-    } else {
-      drawText('QUICK PLAY LOBBY', px + 8, 11, 1, '#ffd23f');
-      const free = 4 - ro.filter(r => !r.bot).length;
-      drawText(free > 0 ? 'STILL SEARCHING FOR MORE PLAYERS' + dots : 'LOBBY FULL!', px + 8, 22, 1, '#ffffff');
-      for (let s = 0; s < 4; s++) {
-        const r = ro.find(q => q.slot === s), y = 36 + s * 11;
-        if (r) {
-          const st = r.eff || r.style, rdy = r.slot === this.mySlot ? this.ready : r.ready;
-          pxCircle(ctx, px + 12, y + 3, 3, SPIDER_COLORS[st.c % 6].ui);
-          drawText(r.name + (r.slot === this.mySlot ? ' (YOU)' : ''), px + 20, y, 1, SPIDER_COLORS[st.c % 6].ui);
-          drawText(rdy ? 'READY' : '...', px + pw - 8, y, 1, rdy ? '#7df06a' : '#9a90c0', 'right');
-        } else drawText('- OPEN SLOT -', px + 20, y, 1, '#5a5080');
-      }
-      let line = 'PRESS START WHEN YOU ARE READY';
-      if (this.allReady || (this.autoT >= 0 && this.autoT <= 1.3 && ro.filter(r => !r.bot).every(r => r.slot === this.mySlot ? this.ready : r.ready))) line = 'EVERYONE IS READY - GO!';
-      else if (this.autoT >= 0) line = 'STARTING IN ' + Math.ceil(this.autoT) + 'S - OR WHEN ALL PRESS START';
-      else if (ro.filter(r => !r.bot).length < 2) line = 'WAITING FOR PLAYERS - START TO PLAY BOTS';
-      drawText(line, px + 8, 36 + 4 * 11 + 2, 1, this.autoT >= 0 ? '#ffd23f' : '#bba8ff');
-      if (this.autoT >= 0 && this.autoT < 10) drawText(String(Math.ceil(this.autoT)), BW / 2, 60, 4, '#ffd23f', 'center', null, '#140c26');
+    let ro = this.roster.slice().sort((a, b) => a.slot - b.slot);
+    if (this.sub !== 'wait') ro = [{ slot: 0, name: 'YOU', style: save.style, eff: save.style }];
+    const mine = this.sub === 'wait' ? this.mySlot : 0;
+    const h = ro.filter(r => !r.bot).length;
+    const status = this.sub === 'searching' ? 'SEARCHING FOR PLAYERS' + dots : this.sub === 'connecting' ? 'JOINING A LOBBY' + dots : h < 2 ? 'LOBBY OPEN - WAITING FOR ANOTHER PLAYER' + dots : h < 4 ? 'STILL SEARCHING FOR MORE PLAYERS' + dots : 'LOBBY FULL!';
+    drawText(status, BW / 2, 50, 1, '#7df06a', 'center', '#140c26');
+    // 4 slot cards
+    const cw = 120, ch = 88, gap = 8, total = cw * 4 + gap * 3, x0 = Math.round(BW / 2 - total / 2), y0 = 76;
+    if (this.sub === 'wait') this.effectiveStyles();
+    for (let s = 0; s < 4; s++) {
+      const x = x0 + s * (cw + gap), r = ro.find(q => q.slot === s);
+      panel(x, y0, cw, ch, 0.85);
+      drawText('SLOT ' + (s + 1), x + cw / 2, y0 + 7, 1, '#9a90c0', 'center');
+      if (r) {
+        const st = r.eff || r.style, rdy = r.slot === mine ? this.ready : r.ready;
+        drawSpider(x + cw / 2, y0 + 46, 0, 1, T * 6, { style: st, gear: T * 3, scale: 2 });
+        drawText(r.name + (r.slot === mine && r.name !== 'YOU' ? ' (YOU)' : ''), x + cw / 2, y0 + 64, 1, SPIDER_COLORS[st.c % 6].ui, 'center');
+        drawText(rdy ? 'READY!' : this.sub === 'wait' ? 'NOT READY' : '', x + cw / 2, y0 + 76, 1, rdy ? '#7df06a' : '#9a90c0', 'center');
+      } else drawText('SEARCHING' + dots, x + cw / 2, y0 + 44, 1, '#6a6a8a', 'center');
     }
-    const bs = this.overlayButtons();
-    for (const b of bs) drawButton(b, !!b.pill && Math.floor(T * 3) % 3 !== 2);
-    setHot(bs);
-    drawText(Input.last === 'gamepad' ? 'Y = START   WARM-UP FIELD - NOTHING COUNTS' : Input.last === 'touch' ? 'WARM-UP FIELD - NOTHING COUNTS' : 'ENTER = START   WARM-UP FIELD - NOTHING COUNTS', BW / 2, BH - 12, 1, 'rgba(255,255,255,0.75)', 'center', '#140c26');
-    if (this.msgT > 0) drawText(this.msg, BW / 2, BH / 2 - 40, 2, '#7df06a', 'center', null, '#140c26');
-  },
-  searchButtons() {
-    const b = [{ label: 'CANCEL', x: BW - 52, y: 50, w: 84, h: 18, action: () => this.leave() }];
-    if (this.searchT > 20) b.push({ label: '+ ADD BOT', x: BW - 52, y: 26, w: 84, h: 18, pill: true, action: () => this.startBotWhileWaiting() });
-    return b;
-  },
-  drawSearching() {
-    const pw = 240, px = 6;
-    panel(px, 6, pw, 44, 0.8);
-    const dots = '.'.repeat(1 + Math.floor(T * 2) % 3);
-    drawText('SEARCHING FOR PLAYERS' + dots, px + 8, 11, 1, '#ffd23f');
-    drawText('WARM-UP FIELD - NOTHING COUNTS', px + 8, 23, 1, '#ffffff');
-    drawText(fmtTime(this.searchT) + '  ' + (this.searchNet ? this.searchNet.report() : ''), px + 8, 35, 1, '#9a90c0');
-    const bs = this.searchButtons();
-    for (const b of bs) {
-      if (b.pill) { const pulse = 0.6 + 0.4 * Math.sin(T * 5); ctx.globalAlpha = pulse; }
-      drawButton(b, b.pill);
-      ctx.globalAlpha = 1;
-    }
-    setHot(bs);
-    if (this.msgT > 0) drawText(this.msg, BW / 2, BH / 2, 2, '#7df06a', 'center', null, '#140c26');
+    let info, col = '#ffffff';
+    if (this.sub !== 'wait') info = 'YOU WILL BE MATCHED WITH OTHER PLAYERS AUTOMATICALLY';
+    else if (this.allReady || (this.autoT >= 0 && this.autoT <= 1.3 && h >= 2 && ro.every(r => r.slot === mine ? this.ready : r.ready))) { info = 'EVERYONE IS READY - GO!'; col = '#7df06a'; }
+    else if (this.autoT >= 0) { info = 'STARTING IN ' + Math.ceil(this.autoT) + 'S - OR AS SOON AS EVERYONE PRESSES START'; col = '#ffd23f'; }
+    else info = 'THE MATCH CAN START ONCE A SECOND PLAYER JOINS';
+    drawText(info, BW / 2, y0 + ch + 12, 1, col, 'center', '#140c26');
+    if (this.sub === 'wait' && this.autoT >= 0 && this.autoT <= 10) drawText(String(Math.ceil(this.autoT)), BW / 2, y0 + ch + 26, 3, '#ffd23f', 'center', null, '#140c26');
+    drawText('4 ROUNDS: FIELD > MEADOW > ISLAND > BARN.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
+    const rep = this.sub === 'wait' && this.net ? this.net.report() : this.searchNet ? this.searchNet.report() : '';
+    drawText(rep, BW / 2, BH - 52, 1, '#7a70a0', 'center');
+    drawUIButtons(this.quickButtons(), uiSel);
+    if (this.msgT > 0) drawText(this.msg, BW / 2, 62, 1, '#ffffff', 'center', '#140c26');
   },
   drawConnecting() {
     dim(0.5);
@@ -4539,6 +4518,7 @@ const VS = {
     if (this.msgT > 0) drawText(this.msg, BW / 2, y0 + ch + 38, 1, '#7df06a', 'center', '#140c26');
   },
   currentButtons() {
+    if (this.kind === 'quick' && (this.sub === 'searching' || this.sub === 'connecting' || this.sub === 'wait')) return this.quickButtons();
     if (this.sub === 'connecting' || (this.sub === 'closed' && !this.W)) return this.sub === 'closed' ? [] : this.connectButtons();
     if (this.sub === 'wait') return this.lobbyButtons();
     if (this.sub === 'match' && this.phase === 'final') return this.finalButtons();
@@ -5102,7 +5082,7 @@ function setScene(name) {
 }
 function isGameplay() {
   if (scene === 'level') return true;
-  if (scene === 'vs') return VS.sub === 'searching' || (VS.kind === 'quick' && !VS.botWhileWaiting && !!VS.warm && (VS.sub === 'wait' || VS.sub === 'connecting')) || (VS.sub === 'match' && VS.phase !== 'final' && !!VS.W);
+  if (scene === 'vs') return VS.sub === 'match' && VS.phase !== 'final' && !!VS.W;
   return false;
 }
 function rotateBlocked() { return isTouchDevice && window.innerHeight > window.innerWidth && !ignoreRotate; }
@@ -5178,7 +5158,7 @@ function backAction() {
     case 'gameover': Overworld.enter(Campaign.level); setScene('overworld'); break;
     case 'ending': setScene('menu'); break;
     case 'overworld': setScene('menu'); break;
-    case 'vs': if (VS.sub === 'wait' || VS.sub === 'connecting') VS.leave(); break;
+    case 'vs': if (VS.sub === 'wait' || VS.sub === 'connecting' || VS.sub === 'searching') VS.leave(); break;
     default: return;
   }
   SFX.play('back');
