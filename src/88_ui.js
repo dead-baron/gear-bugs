@@ -115,15 +115,18 @@ const Screens = {};
 
 Screens.menu = {
   buttons() {
-    const cx = BW / 2, y0 = Math.min(BH - 150, OY + 150), sp = 23;
-    return [
+    const cx = BW / 2, y0 = Math.min(BH - 170, OY + 128), sp = 22;
+    const b = [
       { label: 'CAMPAIGN', x: cx, y: y0, w: 170, h: 20, action: () => openStyle('campaign') },
-      { label: 'QUICK PLAY', x: cx, y: y0 + sp, w: 170, h: 20, action: () => openStyle('quick') },
-      { label: 'PRIVATE ROOM', x: cx, y: y0 + sp * 2, w: 170, h: 20, action: () => setScene('private') },
-      { label: 'SPIDER STYLE', x: cx, y: y0 + sp * 3, w: 170, h: 20, action: () => openStyle(null) },
-      { label: 'OPTIONS', x: cx, y: y0 + sp * 4, w: 170, h: 20, action: () => { optionsReturn = 'menu'; setScene('options'); } },
-      { label: 'NETWORK TEST', x: cx, y: y0 + sp * 5, w: 170, h: 20, action: () => { netTestReturn = 'menu'; setScene('nettest'); NetTest.run(); } },
+      { label: 'PRACTICE', x: cx, y: y0 + sp, w: 170, h: 20, action: () => setScene('practice') },
+      { label: 'QUICK PLAY', x: cx, y: y0 + sp * 2, w: 170, h: 20, action: () => openStyle('quick') },
+      { label: 'PRIVATE ROOM', x: cx, y: y0 + sp * 3, w: 170, h: 20, action: () => setScene('private') },
+      { label: 'SPIDER STYLE', x: cx, y: y0 + sp * 4, w: 170, h: 20, action: () => openStyle(null) },
+      { label: 'OPTIONS', x: cx, y: y0 + sp * 5, w: 170, h: 20, action: () => { optionsReturn = 'menu'; setScene('options'); } },
+      { label: 'NETWORK TEST', x: cx, y: y0 + sp * 6, w: 170, h: 20, action: () => { netTestReturn = 'menu'; setScene('nettest'); NetTest.run(); } },
     ];
+    if (fsSupported() && !isStandalone()) b.push({ label: isFullscreen() ? 'EXIT FULL' : 'FULLSCREEN', x: BW - 52, y: 16, w: 92, h: 18, action: () => toggleFullscreen() });
+    return b;
   },
   draw() {
     drawMenuBackdrop(); dim(0.3);
@@ -134,6 +137,7 @@ Screens.menu = {
     drawStarShape(ctx, 18, BH - 14, 6, '#ffd23f', 0);
     drawText('x ' + save.stars + ' STAR COINS', 28, BH - 17, 1, '#ffd23f', 'left', '#140c26');
     drawText('BUILD ' + BUILD, BW - 6, BH - 10, 1, 'rgba(255,255,255,0.55)', 'right');
+    if (isIOS && !isStandalone() && !fsSupported()) drawText('IPHONE: TAP SHARE > ADD TO HOME SCREEN TO PLAY FULL SCREEN', BW / 2, BH - 30, 1, '#9ad0ff', 'center', '#140c26');
   },
 };
 
@@ -195,27 +199,74 @@ Screens.style = {
   },
 };
 
+/* ---------- Practice: pick any level + difficulty, nothing is saved ---------- */
+Screens.practice = {
+  level: 0, diff: -1, infinite: false,
+  buttons() {
+    if (this.diff < 0) this.diff = save.diff;
+    const cw = Math.min(120, Math.floor((BW - 40) / 4) - 8), gap = 8, total = cw * 4 + gap * 3, x0 = Math.round(BW / 2 - total / 2) + cw / 2, cy = BH / 2 - 34;
+    const b = [];
+    for (let i = 0; i < 4; i++) b.push({ label: '', card: i, x: x0 + i * (cw + gap), y: cy, w: cw, h: 96, action: () => { if (this.level === i) this.play(); else { this.level = i; SFX.play('select'); } } });
+    const y = BH / 2 + 46;
+    b.push({ label: '<', x: BW / 2 - 92, y, w: 24, h: 20, action: () => { this.diff = (this.diff + 3) % 4; } });
+    b.push({ label: '>', x: BW / 2 + 92, y, w: 24, h: 20, action: () => { this.diff = (this.diff + 1) % 4; } });
+    b.push({ label: 'HEARTS: ' + (this.infinite ? 'INFINITE' : 'NORMAL'), x: BW / 2, y: y + 28, w: 200, h: 20, action: () => { this.infinite = !this.infinite; } });
+    b.push({ label: 'PLAY ' + BIOMES[this.level].name, x: BW / 2 + 70, y: BH - 26, w: 210, h: 24, action: () => this.play() });
+    b.push({ label: 'BACK', x: BW / 2 - 120, y: BH - 26, w: 100, h: 24, action: () => setScene('menu') });
+    return b;
+  },
+  play() { SFX.play('confirm'); Campaign.start(this.level, this.diff, undefined, { practice: true, infinite: this.infinite }); setScene('level'); },
+  draw() {
+    drawMenuBackdrop(); dim(0.6);
+    drawText('PRACTICE', BW / 2, 12, 4, '#ffd23f', 'center', null, '#140c26');
+    drawText('PLAY ANY LEVEL - NO STAR COINS, NO PROGRESS, JUST PRACTICE', BW / 2, 48, 1, '#ffffff', 'center', '#140c26');
+    const bs = this.buttons();
+    bs.forEach((b, i) => {
+      if (b.card === undefined) { drawButton(b, i === uiSel && Input.last !== 'touch'); return; }
+      const B = BIOMES[b.card], x = Math.round(b.x - b.w / 2), y = Math.round(b.y - b.h / 2), sel = this.level === b.card, hover = i === uiSel && Input.last !== 'touch';
+      ctx.fillStyle = sel ? '#ffd23f' : hover ? '#bba8ff' : '#140c26'; ctx.fillRect(x - 3, y - 3, b.w + 6, b.h + 6);
+      const bandH = Math.ceil((b.h - 30) / B.sky.length);
+      B.sky.forEach((c, k) => { ctx.fillStyle = c; ctx.fillRect(x, y + k * bandH, b.w, bandH); });
+      const gy = y + b.h - 30;
+      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
+      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
+      const ex = x + b.w / 2, ey = gy - 8;
+      if (b.card === 0) drawLizard(ex, ey + 2, 0, -1, T * 10, Math.sin(T * 2) * 0.2, {});
+      else if (b.card === 1) { drawHive(ex, ey - 22, {}); drawBee(ex + 22, ey - 18 + Math.sin(T * 5) * 3, -1, {}); }
+      else if (b.card === 2) drawGecko(ex, ey + 2, 0, -1, T * 14, 0, {});
+      else drawWidow(ex, ey, 0, -1, T * 10, {});
+      drawText((b.card + 1) + '. ' + B.name, ex, gy + 8, 1, '#ffffff', 'center', '#140c26');
+      drawText(B.npc, ex, gy + 18, 1, sel ? '#ffd23f' : '#bba8ff', 'center', '#140c26');
+    });
+    const D = DIFFS[this.diff < 0 ? save.diff : this.diff];
+    drawText(D.name, BW / 2, BH / 2 + 41, 2, D.color, 'center', '#140c26');
+  },
+};
+
 /* ---------- Options ---------- */
 let optionsReturn = 'menu';
 Screens.options = {
   buttons() {
-    const cx = BW / 2, y0 = BH / 2 - 80, onoff = v => v ? 'ON' : 'OFF';
-    return [
-      { label: 'SOUND: ' + onoff(settings.sound), x: cx, y: y0, w: 210, h: 20, action: () => { settings.sound = !settings.sound; persist(); } },
-      { label: 'SCREEN SHAKE: ' + onoff(settings.shake), x: cx, y: y0 + 26, w: 210, h: 20, action: () => { settings.shake = !settings.shake; persist(); } },
-      { label: 'AIM GUIDE: ' + onoff(settings.aim), x: cx, y: y0 + 52, w: 210, h: 20, action: () => { settings.aim = !settings.aim; persist(); } },
-      { label: 'CAMPAIGN: ' + DIFFS[save.diff].name, x: cx, y: y0 + 78, w: 210, h: 20, action: () => { save.diff = (save.diff + 1) % 4; persist(); } },
-      { label: 'CONTROLS', x: cx, y: y0 + 104, w: 210, h: 20, action: () => setScene('controls') },
-      { label: Screens.options.confirmReset ? 'TAP AGAIN TO ERASE' : 'RESET PROGRESS', x: cx, y: y0 + 130, w: 210, h: 20, action: () => {
+    const cx = BW / 2, y0 = BH / 2 - 96, sp = 24, onoff = v => v ? 'ON' : 'OFF';
+    const b = [
+      { label: 'SOUND: ' + onoff(settings.sound), action: () => { settings.sound = !settings.sound; persist(); } },
+      { label: 'SCREEN SHAKE: ' + onoff(settings.shake), action: () => { settings.shake = !settings.shake; persist(); } },
+      { label: 'AIM GUIDE: ' + onoff(settings.aim), action: () => { settings.aim = !settings.aim; persist(); } },
+      { label: 'FULLSCREEN: ' + (isFullscreen() || isStandalone() ? 'ON' : 'OFF'), action: () => toggleFullscreen() },
+      { label: 'CAMPAIGN: ' + DIFFS[save.diff].name, action: () => { save.diff = (save.diff + 1) % 4; persist(); } },
+      { label: 'CONTROLS', action: () => setScene('controls') },
+      { label: Screens.options.confirmReset ? 'TAP AGAIN TO ERASE' : 'RESET PROGRESS', action: () => {
         if (!Screens.options.confirmReset) { Screens.options.confirmReset = true; return; }
         save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]; persist(); Screens.options.confirmReset = false;
       } },
-      { label: 'BACK', x: cx, y: y0 + 162, w: 210, h: 22, action: () => { Screens.options.confirmReset = false; setScene(optionsReturn); } },
+      { label: 'BACK', action: () => { Screens.options.confirmReset = false; setScene(optionsReturn); } },
     ];
+    b.forEach((x, i) => Object.assign(x, { x: cx, y: y0 + i * sp + (i === b.length - 1 ? 6 : 0), w: 210, h: 20 }));
+    return b;
   },
   draw() {
     drawMenuBackdrop(); dim(0.6);
-    drawText('OPTIONS', BW / 2, BH / 2 - 124, 4, '#ffd23f', 'center', null, '#140c26');
+    drawText('OPTIONS', BW / 2, BH / 2 - 136, 4, '#ffd23f', 'center', null, '#140c26');
     drawUIButtons(this.buttons(), uiSel);
   },
 };
@@ -339,8 +390,9 @@ Screens.pause = {
     const inVs = pauseFrom === 'vs';
     const b = [{ label: 'RESUME', x: cx, y: y0, w: 170, h: 22, action: () => setScene(pauseFrom) }];
     if (!inVs) {
-      b.push({ label: 'RESTART LEVEL', x: cx, y: y0 + 28, w: 170, h: 22, action: () => { Campaign.start(Campaign.level, Campaign.diff); setScene('level'); } });
-      b.push({ label: 'WORLD MAP', x: cx, y: y0 + 56, w: 170, h: 22, action: () => { Overworld.enter(Campaign.level); setScene('overworld'); } });
+      b.push({ label: 'RESTART LEVEL', x: cx, y: y0 + 28, w: 170, h: 22, action: () => { Campaign.restart(); setScene('level'); } });
+      b.push(Campaign.practice ? { label: 'PRACTICE MENU', x: cx, y: y0 + 56, w: 170, h: 22, action: () => setScene('practice') }
+                               : { label: 'WORLD MAP', x: cx, y: y0 + 56, w: 170, h: 22, action: () => { Overworld.enter(Campaign.level); setScene('overworld'); } });
     } else b.push({ label: 'NETWORK TEST', x: cx, y: y0 + 28, w: 170, h: 22, action: () => { netTestReturn = 'pause'; setScene('nettest'); NetTest.run(); } });
     b.push({ label: 'OPTIONS', x: cx, y: y0 + (inVs ? 56 : 84), w: 170, h: 22, action: () => { optionsReturn = 'pause'; setScene('options'); } });
     b.push({ label: inVs ? 'LEAVE MATCH' : 'MAIN MENU', x: cx, y: y0 + (inVs ? 84 : 112), w: 170, h: 22, action: () => { if (inVs) VS.leave(); else setScene('menu'); } });
@@ -359,8 +411,9 @@ Screens.gameover = {
   buttons() {
     const cx = BW / 2, y0 = BH / 2 + 30;
     return [
-      { label: 'TRY AGAIN', x: cx, y: y0, w: 170, h: 22, action: () => { Campaign.start(Campaign.level, Campaign.diff); setScene('level'); } },
-      { label: 'WORLD MAP', x: cx, y: y0 + 28, w: 170, h: 22, action: () => { Overworld.enter(Campaign.level); setScene('overworld'); } },
+      { label: 'TRY AGAIN', x: cx, y: y0, w: 170, h: 22, action: () => { Campaign.restart(); setScene('level'); } },
+      Campaign.practice ? { label: 'PRACTICE MENU', x: cx, y: y0 + 28, w: 170, h: 22, action: () => setScene('practice') }
+                        : { label: 'WORLD MAP', x: cx, y: y0 + 28, w: 170, h: 22, action: () => { Overworld.enter(Campaign.level); setScene('overworld'); } },
       { label: 'MAIN MENU', x: cx, y: y0 + 56, w: 170, h: 22, action: () => setScene('menu') },
     ];
   },

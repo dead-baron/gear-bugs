@@ -17,14 +17,26 @@ function isGameplay() {
   return false;
 }
 function rotateBlocked() { return isTouchDevice && window.innerHeight > window.innerWidth && !ignoreRotate; }
+/* ---------- Fullscreen (must run inside a user gesture) ---------- */
+const fsSupported = () => !!(document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen);
+const isFullscreen = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+const isStandalone = () => !!((window.matchMedia && matchMedia('(display-mode: fullscreen), (display-mode: standalone)').matches) || navigator.standalone);
+const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function lockLandscape() { try { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch (e) {} }
 function tryFullscreenLandscape() {
   try {
+    if (isFullscreen()) return;
     const el = document.documentElement;
-    if (!document.fullscreenElement && el.requestFullscreen) {
-      el.requestFullscreen({ navigationUI: 'hide' }).then(() => { if (screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); }).catch(() => {});
-    }
+    if (el.requestFullscreen) el.requestFullscreen({ navigationUI: 'hide' }).then(lockLandscape).catch(() => {});
+    else if (el.webkitRequestFullscreen) { el.webkitRequestFullscreen(); lockLandscape(); }
   } catch (e) {}
 }
+function exitFullscreen() {
+  try { if (document.exitFullscreen) document.exitFullscreen().catch(() => {}); else if (document.webkitExitFullscreen) document.webkitExitFullscreen(); } catch (e) {}
+}
+function toggleFullscreen() { if (isFullscreen()) { exitFullscreen(); settings.autoFull = false; } else { tryFullscreenLandscape(); settings.autoFull = true; } persist(); }
+document.addEventListener('fullscreenchange', () => setTimeout(resize, 100));
+document.addEventListener('webkitfullscreenchange', () => setTimeout(resize, 100));
 function onFocusLost() {
   if (scene === 'level') { pauseFrom = 'level'; setScene('pause'); }
 }
@@ -59,6 +71,7 @@ function backAction() {
     case 'options': Screens.options.confirmReset = false; setScene(optionsReturn); break;
     case 'controls': setScene('options'); break;
     case 'private': setScene('menu'); break;
+    case 'practice': setScene('menu'); break;
     case 'nettest': setScene(netTestReturn); break;
     case 'pause': setScene(pauseFrom); break;
     case 'gameover': Overworld.enter(Campaign.level); setScene('overworld'); break;

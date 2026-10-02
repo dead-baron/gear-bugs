@@ -8,6 +8,8 @@ All the pixel art, the font and the sound effects are generated in code. You onl
 
 **▶ [Play in your browser](https://deadbaron.com/gear-bugs/)**
 
+On a phone the game switches to full screen the first time you tap it. For the best experience, use **Add to Home Screen** (Android: Chrome menu → *Install app*; iPhone: Share → *Add to Home Screen*). It then launches full screen in landscape like an app.
+
 It works on desktop, tablet and phone (landscape is best) with keyboard + mouse, a game controller, or touch. The original prototype is still there as [`classic.html`](https://deadbaron.com/gear-bugs/classic.html).
 
 ## Campaign
@@ -26,6 +28,8 @@ Now and then a rare **glowing red butterfly** flutters in after the first 10 sec
 In every level, catch **5 golden flies** to power up (web a fly to reel it in). Then web the enemy to trap it and crawl over to bite it. It drops a **Star Coin**, which you keep for good in your inventory. Beat the Black Widow to reach the ending screen.
 
 The difficulties are **Easy, Medium, Hard and HELL MODE**. In HELL MODE enemies react almost instantly, have glowing red eyes and sometimes breathe fire. The fire slowly spreads along wooden platforms.
+
+**Practice** lets you play any of the four levels on any difficulty, with an optional infinite-hearts mode. Nothing is saved.
 
 ## VS mode (up to 4 players)
 

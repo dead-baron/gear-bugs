@@ -4,7 +4,9 @@
 const Campaign = {
   W: null, level: 0, diff: 1, phase: 'play', timer: 0, banner: null, time: 0, flyT: 0, me: null,
 
-  start(level, diff, forcedSeed) {
+  restart() { this.start(this.level, this.diff, undefined, this.opts); },
+  start(level, diff, forcedSeed, opts) {
+    this.opts = opts || {}; this.practice = !!this.opts.practice; this.infinite = !!this.opts.infinite; this.respawnT = 0;
     this.level = level; this.diff = diff; this.phase = 'play'; this.timer = 0; this.time = 0; this.flyT = 0.5;
     const seed = forcedSeed !== undefined ? forcedSeed : (Math.random() * 0xFFFFFFFF) >>> 0;   // pseudo-random layout every attempt
     const W = this.W = new World({ mode: 'campaign', biome: level, seed, diff, authority: true, rules: this.rules() });
@@ -52,6 +54,7 @@ const Campaign = {
         C.complete();
       },
       onSpiderDead(sp, cause) {
+        if (C.infinite) { C.respawnT = 1.2; C.banner = { text: 'RESPAWNING...', sub: 'INFINITE HEARTS', t: 1.2, max: 1.2, color: '#9ad0ff' }; return; }
         C.phase = 'dead'; C.timer = 1.8;
         C.banner = { text: cause === 'water' ? 'SPLASH!' : cause === 'bite' ? 'BITTEN!' : 'OH NO!', sub: '', t: 1.8, max: 1.8, color: '#ff5a7a' };
       },
@@ -59,6 +62,11 @@ const Campaign = {
   },
   complete() {
     this.phase = 'won'; this.timer = 2.8;
+    if (this.practice) {
+      SFX.play('complete');
+      this.banner = { text: 'PRACTICE CLEAR!', sub: 'NICE! TRY ANOTHER LEVEL OR DIFFICULTY', t: 2.8, max: 2.8, color: '#7df06a' };
+      return;
+    }
     save.stars++;
     save.cleared[this.diff][this.level] = 1;
     const was = save.unlocked[this.diff];
@@ -83,8 +91,19 @@ const Campaign = {
     if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null; }
     if (shakeT > 0) { shakeT -= dt; if (shakeT <= 0) shakeMag = 0; }
     if (this.phase === 'dead') { this.timer -= dt; if (this.timer <= 0) { setScene('gameover'); SFX.play('gameover'); } }
+    if (this.respawnT > 0) {
+      this.respawnT -= dt;
+      if (this.respawnT <= 0) {
+        const s = W.L.spawns[0], old = this.me;
+        const nb = new SpiderBody('me', s.x, s.y, { style: save.style, name: 'YOU', facing: 1 });
+        nb.flies = old.flies; nb.invuln = 2;
+        W.spiders[W.spiders.indexOf(old)] = nb; this.me = nb;
+        burst(W, s.x, s.y, 16, ['#9ad0ff', '#ffffff'], 80, 0.5);
+      }
+    }
     if (this.phase === 'won') {
       this.timer -= dt;
+      if (this.timer <= 0 && this.practice) { setScene('practice'); return; }
       if (this.timer <= 0) {
         if (this.level === 3) { setScene('ending'); SFX.play('complete'); }
         else { Overworld.enter(this.level, this.newUnlock); setScene('overworld'); }
@@ -126,7 +145,7 @@ function drawCampaignHUD(C) {
   panel(Math.round(mx - mw / 2), 6, mw, 13);
   drawText(msg, mx, 9, 1, col, 'center');
   const D = DIFFS[C.diff];
-  drawText('L' + (C.level + 1) + ' ' + BIOMES[C.level].name + ' - ' + D.name + '  ' + fmtTime(C.time), mx, 23, 1, D.color, 'center', '#140c26');
+  drawText((C.practice ? 'PRACTICE ' : '') + 'L' + (C.level + 1) + ' ' + BIOMES[C.level].name + ' - ' + D.name + (C.infinite ? ' - INF HEARTS' : '') + '  ' + fmtTime(C.time), mx, 23, 1, D.color, 'center', '#140c26');
   // star tally
   drawStarShape(ctx, BW - 62, 16, 6, '#ffd23f', 0);
   drawText('x' + save.stars, BW - 54, 13, 1, '#ffd23f', 'left', '#140c26');

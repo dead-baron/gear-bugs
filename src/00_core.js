@@ -169,7 +169,7 @@ const save = {
   cleared: [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]],
   style: { c: 0, h: 0, p: 0 },                 // spider customization
   diff: 1,
-  settings: { sound: true, shake: true, aim: true },
+  settings: { sound: true, shake: true, aim: true, autoFull: true },
   name: '',
 };
 try {

@@ -70,6 +70,7 @@ canvas.addEventListener('pointerdown', e => {
   }
   // ---- touch / pen ----
   Input.last = 'touch';
+  if (settings.autoFull && typeof tryFullscreenLandscape === 'function' && !isStandalone()) tryFullscreenLandscape();
   if (!gameplayPointer) { Input.taps.push({ x: p.x, y: p.y, kind: 'touch' }); return; }
   const hot = uiHot.find(r => inRect(p, { x: r.x - 4, y: r.y - 4, w: r.w + 8, h: r.h + 8 }));
   if (hot) { Input.taps.push({ x: p.x, y: p.y, kind: 'touch', pause: !!hot.pause }); return; }
