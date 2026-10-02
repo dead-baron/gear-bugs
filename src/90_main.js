@@ -36,6 +36,18 @@ function exitFullscreen() {
 }
 function toggleFullscreen() { if (isFullscreen()) { exitFullscreen(); settings.autoFull = false; } else { tryFullscreenLandscape(); settings.autoFull = true; } persist(); }
 document.addEventListener('fullscreenchange', () => setTimeout(resize, 100));
+/* ---------- Install as an app (Chrome / Edge / Android) ---------- */
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; });
+window.addEventListener('appinstalled', () => { deferredInstall = null; });
+function promptInstall() {
+  if (!deferredInstall) return;
+  const d = deferredInstall; deferredInstall = null;
+  try { d.prompt(); d.userChoice.catch(() => {}); } catch (e) {}
+}
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
 document.addEventListener('webkitfullscreenchange', () => setTimeout(resize, 100));
 function onFocusLost() {
   if (scene === 'level') { pauseFrom = 'level'; setScene('pause'); }

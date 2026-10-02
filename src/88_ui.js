@@ -126,6 +126,7 @@ Screens.menu = {
       { label: 'NETWORK TEST', x: cx, y: y0 + sp * 6, w: 170, h: 20, action: () => { netTestReturn = 'menu'; setScene('nettest'); NetTest.run(); } },
     ];
     if (fsSupported() && !isStandalone()) b.push({ label: isFullscreen() ? 'EXIT FULL' : 'FULLSCREEN', x: BW - 52, y: 16, w: 92, h: 18, action: () => toggleFullscreen() });
+    if (deferredInstall && !isStandalone()) b.push({ label: 'INSTALL APP', x: 58, y: 16, w: 100, h: 18, action: () => promptInstall() });
     return b;
   },
   draw() {

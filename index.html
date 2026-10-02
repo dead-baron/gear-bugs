@@ -53,7 +53,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-02T04:52:14Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-02T04:56:15Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -4739,6 +4739,7 @@ Screens.menu = {
       { label: 'NETWORK TEST', x: cx, y: y0 + sp * 6, w: 170, h: 20, action: () => { netTestReturn = 'menu'; setScene('nettest'); NetTest.run(); } },
     ];
     if (fsSupported() && !isStandalone()) b.push({ label: isFullscreen() ? 'EXIT FULL' : 'FULLSCREEN', x: BW - 52, y: 16, w: 92, h: 18, action: () => toggleFullscreen() });
+    if (deferredInstall && !isStandalone()) b.push({ label: 'INSTALL APP', x: 58, y: 16, w: 100, h: 18, action: () => promptInstall() });
     return b;
   },
   draw() {
@@ -5124,6 +5125,18 @@ function exitFullscreen() {
 }
 function toggleFullscreen() { if (isFullscreen()) { exitFullscreen(); settings.autoFull = false; } else { tryFullscreenLandscape(); settings.autoFull = true; } persist(); }
 document.addEventListener('fullscreenchange', () => setTimeout(resize, 100));
+/* ---------- Install as an app (Chrome / Edge / Android) ---------- */
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; });
+window.addEventListener('appinstalled', () => { deferredInstall = null; });
+function promptInstall() {
+  if (!deferredInstall) return;
+  const d = deferredInstall; deferredInstall = null;
+  try { d.prompt(); d.userChoice.catch(() => {}); } catch (e) {}
+}
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+}
 document.addEventListener('webkitfullscreenchange', () => setTimeout(resize, 100));
 function onFocusLost() {
   if (scene === 'level') { pauseFrom = 'level'; setScene('pause'); }
