@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#1a1330">
+<title>GEAR BUGS</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%;
+    overflow: hidden; background: #1a1330;
+    touch-action: none; overscroll-behavior: none;
+    -webkit-user-select: none; user-select: none;
+    -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+  }
+  canvas {
+    position: fixed; left: 0; top: 0; display: block;
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    touch-action: none; outline: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0"></canvas>
+<script>
+'use strict';
+/* =====================================================================
+   GEAR BUGS - vertical slice
+   Single self-contained file. Source modules live in /src and are
+   concatenated by build.py; each module is marked with a banner.
+     00_core      constants, helpers, canvas, pixel font, save data
+     10_audio     Web Audio synthesized arcade SFX
+     20_input     keyboard / mouse / touch / gamepad, unified actions
+     30_geometry  platforms, 360-degree perimeter crawling math, LOS
+     40_levels    4 biomes, seeded level generator, cached art layers
+     50_sprites   procedural pixel sprites (spiders, enemies, items)
+     60_entities  spider physics + ropes, webs, flies, enemies, fire
+     70_world     World container shared by campaign and VS
+     75_campaign  campaign rules, overworld map, fog of war
+     80_net       Trystero/WebRTC networking per the multiplayer spec
+     85_vs        VS match controller, lobby, bots, scoring
+     88_ui        menus, HUD, screens, network test
+     90_main      scene machine, main loop, version check
+   ===================================================================== */

@@ -1,41 +1,55 @@
 # GEAR BUGS
 
-A tiny 8-bit spider adventure in a single HTML file. Crawl on any surface — walls, ceilings, upside down — swing on webs, collect coins, and take down the lizard.
+An 8-bit spider adventure in a single HTML file. Crawl on any surface (walls, ceilings, upside down), swing on elastic web ropes, catch golden flies, and take down four bosses. Or battle up to three friends online.
 
-Everything (pixel art, font, sound effects) is generated in code. No assets, no build step, no dependencies.
+All the pixel art, the font and the sound effects are generated in code. You only need the one file to play.
 
 ## Play
 
 **▶ [Play in your browser](https://deadbaron.com/gear-bugs/)**
 
-Or download `index.html` and open it in any modern browser. That's it.
+It works on desktop, tablet and phone (landscape is best) with keyboard + mouse, a game controller, or touch. The original prototype is still there as [`classic.html`](https://deadbaron.com/gear-bugs/classic.html).
 
-Works on desktop, tablet and phone (landscape recommended), with keyboard + mouse, a game controller, or touch.
+## Campaign
 
-## How to win
+Travel across a Super Mario World–style map. Locked areas stay hidden under fog until you clear the level before them. Every attempt gets a new pseudo-random layout.
 
-1. **Collect 5 coins.** They appear one at a time around the level — on rocks, branches, walls and even under ledges.
-2. **Level up.** With 5 coins your web becomes strong enough to trap the lizard.
-3. **Web the lizard, then bite it.** Shoot it to wrap it up, then crawl over and touch it before it breaks free.
-4. **Grab the Star Coin** it drops to win.
+| Level | Biome | Enemy |
+|---|---|---|
+| 1 | Grassy Field | **Lizard**: a slow chaser that climbs walls but not ceilings, aims its head at you and strikes with its tongue |
+| 2 | Flower Meadow | **Beehive**: up to 3 bees that hunt you only when they can see you. A web knocks any bee out of the sky |
+| 3 | Tropical Island | **Gecko**: fast, jumps a lot, climbs every surface and has a very long tongue. The sea on both sides is instant defeat |
+| 4 | Old Barn & Wheat Field | **Black Widow**: a boss that dashes or pounces when it sees you, spits webs that stun you (mash buttons to break free), and kills with one bite |
 
-The lizard is slow, but it chases you, climbs walls and flicks its tongue when you get close — three hits and you're out. It can't hang upside down, so undersides of ledges are safe spots.
+In every level, catch **5 golden flies** to power up (web a fly to reel it in). Then web the enemy to trap it and crawl over to bite it. It drops a **Star Coin**, which you keep for good in your inventory. Beat the Black Widow to reach the ending screen.
+
+The difficulties are **Easy, Medium, Hard and HELL MODE**. In HELL MODE enemies react almost instantly, have glowing red eyes and sometimes breathe fire. The fire slowly spreads along wooden platforms.
+
+## VS mode (up to 4 players)
+
+- **Quick Play** puts you in a random match with other players. While it searches you can practise on a warm-up field, and after 20 seconds you can **+ ADD BOT** to play bots until a real match is found.
+- **Private Room** lets you host a room with a 4-letter code or an invite link (`?room=CODE`), or play an offline bot match.
+- The modes are **1v1, 2v2 Teams and 4-player Free-For-All**. A match is 4 rounds: Field → Meadow → Island → Barn.
+- The first to 5 flies powers up. A powered web freezes a rival so you can bite them out of the round. Webs fired before you're powered up only slow rivals down.
+- You score points for flies, for taking out each level's creature and for eliminations. After round 4 a leaderboard shows everyone's wins and points.
+
+Networking is peer-to-peer WebRTC through Trystero (Nostr strategy) with STUN + TURN. There is no game server. **Network Test** in the main menu checks whether your connection can join matches.
 
 ## Controls
 
 | Action | Keyboard + mouse | Controller | Touch |
 |---|---|---|---|
-| Crawl / climb | WASD or arrow keys | Left stick or D-pad | Stick on the left side of the screen |
-| Jump / let go | Space | A | JUMP button |
-| Shoot web | Click (aims at cursor), or J / K / F | RB, RT or X (right stick aims) | Drag the WEB button to aim, release to fire — or tap anywhere in the world |
-| Pause | Esc or P | Start | Pause button (top right) |
+| Crawl / climb / sprint | WASD or arrows (keep holding to sprint) | Left stick or D-pad | Floating stick on the left |
+| Jump / let go of the rope | Space | A | JUMP |
+| Shoot web | Click (aims at the cursor), or J / K / F / X | RB, RT, LB or X (aim with the right stick) | Drag WEB to aim and release, or tap the world |
+| Reel in / let out the rope | Up / Down while swinging | Stick up / down | Stick up / down |
+| Break free of webs | Mash any button | Mash any button | Mash the buttons |
+| Pause | Esc or P | Start | ❚❚ (top right) |
 
-**Tips**
+## Development
 
-- Hold a direction to keep crawling all the way around a rock or ledge.
-- Press down while upside down to drop off.
-- Shooting a web at a platform pulls you to it on a swinging line. Press jump mid-swing to let go and keep your momentum.
+The source is split into modules in [`src/`](src). `build.py` joins them into `index.html` and stamps a build time. Players with an old cached copy see a **NEW VERSION READY** button.
 
-## Options
-
-Sound, screen shake, difficulty (Easy / Normal / Hard) and the aim guide can be changed from the Options menu. Settings and your best time are saved in the browser.
+```
+python3 build.py
+```
