@@ -564,7 +564,7 @@ const VS = {
       const h = this.humans().length;
       if (this.kind !== 'bots') {
         if (h >= 4 && this.autoT < 0) this.autoT = 3;
-        else if (h >= 2 && this.autoT < 0) this.autoT = this.kind === 'quick' ? 25 : 45;
+        else if (h >= 2 && this.autoT < 0) this.autoT = this.kind === 'quick' ? 12 : 45;
         else if (h < 2 && this.kind !== 'bots') this.autoT = -1;
         if (this.autoT >= 0) { this.autoT -= dt; if (this.autoT <= 0) { this.autoT = -1; this.startMatch(); } }
       }
@@ -773,10 +773,12 @@ const VS = {
     }
     const h = this.roster.filter(r => !r.bot).length;
     let info = '';
-    if (this.autoT >= 0) info = 'AUTO-START IN ' + Math.ceil(this.autoT) + 'S';
-    else if (this.isHost && this.kind !== 'bots' && h < 2) info = this.kind === 'quick' ? 'BOTS FILL EMPTY SLOTS WHEN THE MATCH STARTS' : 'SHARE THE CODE - START ANY TIME WITH BOTS';
-    else if (!this.isHost) info = 'WAITING FOR THE HOST TO START';
-    drawText(info, BW / 2, y0 + ch + 10, 1, '#ffffff', 'center', '#140c26');
+    if (this.autoT >= 0) drawText('STARTING IN ' + Math.ceil(this.autoT) + '...', BW / 2, y0 + ch + 6, 2, '#ffd23f', 'center', null, '#140c26');
+    else {
+      if (this.isHost) info = h >= 2 ? 'PRESS START WHEN READY - BOTS FILL EMPTY SLOTS' : this.kind === 'quick' ? 'STILL LOOKING - OR PRESS START TO PLAY WITH BOTS' : this.kind === 'bots' ? 'PICK A MODE AND PRESS START' : 'SHARE THE CODE - OR PRESS START TO PLAY WITH BOTS';
+      else info = 'WAITING FOR THE HOST TO START';
+      drawText(info, BW / 2, y0 + ch + 10, 1, '#ffffff', 'center', '#140c26');
+    }
     drawText('4 ROUNDS: FIELD > MEADOW > ISLAND > BARN.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
     if (this.net) drawText(this.net.report(), BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.lobbyButtons(), uiSel);

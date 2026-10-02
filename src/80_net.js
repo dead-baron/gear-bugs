@@ -70,7 +70,13 @@ function loadTrystero() {
 function trAction(room, name) {
   const r = room.makeAction(name);
   const seen = new WeakSet();
-  const wrap = fn => (data, peerId) => { if (data && typeof data === 'object') { if (seen.has(data)) return; seen.add(data); } fn(data, peerId); };
+  // Trystero 0.25 passes (data, {peerId, metadata}); older versions pass (data, peerId)
+  const wrap = fn => (data, from) => {
+    const peerId = typeof from === 'string' ? from : from && from.peerId;
+    if (!peerId) return;
+    if (data && typeof data === 'object') { if (seen.has(data)) return; seen.add(data); }
+    fn(data, peerId);
+  };
   if (Array.isArray(r)) return { send: (d, to) => r[0](d, to || null), on: fn => r[1](wrap(fn)) };
   return {
     send: (d, to) => r.send(d, to ? { target: to } : undefined),
