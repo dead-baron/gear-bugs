@@ -33,8 +33,8 @@ const Campaign = {
           SFX.play('powerup'); shake(0.2, 2);
           burst(C.W, sp.x, sp.y, 30, ['#ffd23f', '#fff3a0', '#ffffff'], 140, 0.9);
           C.banner = { text: 'POWERED UP!', sub: 'READY TO FIGHT! WEB THE ' + BIOMES[C.level].npc, t: 2.6, max: 2.6, color: '#ffd23f' };
-          for (const fl of C.W.flies) burst(C.W, fl.x, fl.y, 4, ['#fff3a0'], 30, 0.3);
-          C.W.flies.length = 0;
+          for (const fl of C.W.flies) if (!fl.heart) burst(C.W, fl.x, fl.y, 4, ['#fff3a0'], 30, 0.3);
+          C.W.flies = C.W.flies.filter(fl => fl.heart);
         }
       },
       onEnemyBite(e, sp) { if (sp.powered && e.alive) e.defeat(C.W, sp.slot); },
@@ -75,8 +75,9 @@ const Campaign = {
     W.aim = c.aim;
     W.step(dt, s => s === this.me && this.phase === 'play' ? c : NO_CONTROLS);
     // keep a couple of flies buzzing around until the spider is powered up
+    if (this.phase === 'play') W.maybeSpawnHeart(dt, this.time);
     if (this.me.flies < 5 && this.phase === 'play') {
-      const active = W.flies.length;
+      const active = W.flies.filter(f => !f.heart).length;
       if (active < Math.min(3, 5 - this.me.flies)) { this.flyT -= dt; if (this.flyT <= 0) { W.spawnFly(); this.flyT = 1.4; } }
     }
     if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null; }

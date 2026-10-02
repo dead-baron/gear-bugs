@@ -283,6 +283,11 @@ const VS = {
         if (V.isHost) V.awardFly(sp.slot, f);
         else if (sp === V.me) { V.claims.push(f.id); if (V.claims.length > 12) V.claims.shift(); V.W.claimed.set(f.id, V.W.time); floater(V.W, f.x, f.y - 10, '+1', '#ffd23f'); }
       },
+      onHeart(sp, f) {
+        if (V.phase !== 'play') return;
+        if (sp.local) healSpider(V.W, sp, f.x, f.y);
+        if (!V.isHost && sp === V.me) { V.claims.push(f.id); if (V.claims.length > 12) V.claims.shift(); V.W.claimed.set(f.id, V.W.time); }
+      },
       onPvPHit(shooter, target) {
         const k = shooter.dmg[target.id] || (shooter.dmg[target.id] = [0, 0]);
         if (shooter.powered) { k[1]++; SFX.play('trap'); floater(V.W, target.x, target.y - 16, 'FROZEN!', '#ffffff'); }
@@ -355,7 +360,8 @@ const VS = {
       const aliveTeams = new Set(this.roster.filter(r => alive[r.slot]).map(r => this.teamOf(r.slot)));
       if ((teams.size >= 2 && aliveTeams.size <= 1) || this.phaseT <= 0) this.endRound(alive, aliveTeams);
       // keep flies buzzing
-      if (this.W.flies.length < 4) { this.flyT -= dt; if (this.flyT <= 0) { this.W.spawnFly(); this.flyT = 1.5; } }
+      if (this.W.flies.filter(f => !f.heart).length < 4) { this.flyT -= dt; if (this.flyT <= 0) { this.W.spawnFly(); this.flyT = 1.5; } }
+      this.W.maybeSpawnHeart(dt, VS_ROUND_TIME - this.phaseT);
       for (const r of this.respawns) { r.t -= dt; if (r.t <= 0) { r.done = true; this.spawnHazard(this.rn); } }
       this.respawns = this.respawns.filter(r => !r.done);
     } else if (this.phase === 'result' && this.phaseT <= 0) {
@@ -422,7 +428,7 @@ const VS = {
     };
     const w = { m };
     if (this.W && this.phase !== 'wait') {
-      w.fl = this.W.flies.filter(f => f.state === 'free').map(f => [f.id, nX(f.x), nY(f.y)]);
+      w.fl = this.W.flies.filter(f => f.state === 'free').map(f => [f.id, nX(f.x), nY(f.y), f.heart ? 1 : 0]);
       w.en = this.W.enemies.filter(e => e.alive).map(e => [e.id, ENEMY_CODES[e.type], nX(e.x), nY(e.y), Math.round((e.drawAngle || 0) * 100), e.facing || 1,
         Math.round(e.frozenT * 10), (e.windup > 0 ? 1 : 0) | (e.tongueT >= 0 || e.windup > 0 || e.breathT > 0 ? 2 : 0) | (e.state === 'air' ? 4 : 0) | (e.invisible ? 8 : 0) | (e.breathT > 0 ? 16 : 0) | (e.state === 'fall' ? 32 : 0),
         Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100), Math.round((e.spawnT || 0) * 10)]);
@@ -447,7 +453,7 @@ const VS = {
           if (done.has(fid)) continue;
           done.add(fid);
           const f = this.W.flies.find(q => q.id === fid);
-          if (f) { this.W.flies.splice(this.W.flies.indexOf(f), 1); this.awardFly(r.slot, f); }
+          if (f) { this.W.flies.splice(this.W.flies.indexOf(f), 1); if (!f.heart) this.awardFly(r.slot, f); }
         }
         if (!d.al) this.creditDeath(r.slot, d.kb);
       }
@@ -512,11 +518,11 @@ const VS = {
     if (!W || m.ph === 'wait') return;
     // flies
     const seen = new Set();
-    for (const [id, x, y] of w.fl || []) {
+    for (const [id, x, y, kind] of w.fl || []) {
       seen.add(id);
       if (W.claimed.has(id)) continue;
       let f = W.flies.find(q => q.id === id);
-      if (!f) { f = new Fly(dX(x), dY(y), id); f.mirror = true; W.flies.push(f); }
+      if (!f) { f = new Fly(dX(x), dY(y), id, kind ? 'heart' : undefined); f.mirror = true; f.life = Infinity; W.flies.push(f); }
       f.tx = dX(x); f.ty = dY(y);
     }
     W.flies = W.flies.filter(f => seen.has(f.id) && !W.claimed.has(f.id) || f.state === 'reel');

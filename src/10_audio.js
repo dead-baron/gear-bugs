@@ -57,6 +57,7 @@ const SFX = {
       case 'release': this.tone(500, 320, 0.08, 'triangle', 0.1); break;
       case 'snap':    this.noise(0.08, 0.15, 2400, 0, 'highpass'); break;
       case 'fly':     this.tone(988, 988, 0.07, 'square', 0.12); this.tone(1480, 1480, 0.2, 'square', 0.12, 0.07); break;
+      case 'heart':   [880, 1175, 1568].forEach((f, i) => this.tone(f, f * 1.02, 0.12, 'triangle', 0.15, i * 0.07)); break;
       case 'reel':    this.tone(700, 1200, 0.15, 'triangle', 0.12); break;
       case 'powerup': [523, 659, 784, 1047, 1319].forEach((f, i) => { this.tone(f, f, 0.14, 'square', 0.12, i * 0.08); this.tone(f / 2, f / 2, 0.14, 'triangle', 0.11, i * 0.08); }); break;
       case 'trap':    this.noise(0.25, 0.22, 900); this.tone(300, 80, 0.3, 'square', 0.15); this.tone(1200, 1900, 0.2, 'triangle', 0.1, 0.1); break;

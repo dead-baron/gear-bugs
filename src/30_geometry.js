@@ -65,12 +65,12 @@ function crawlMove(e, delta, allow) {
   if (np.y < WORLD_TOP + e.r * 0.5) return 'blocked';
   if (allow && !allow(np)) return 'blocked';
   for (const q of PLATS) {
-    if (q === e.plat) continue;
+    if (q === e.plat || (e.passSoft && q.soft)) continue;
     if (rectDist(q, np.x, np.y) < e.r - 0.5) {
       const s2 = sFromPoint(q, e.r, np.x, np.y);
       const p2 = perim(q, e.r, s2);
       if (allow && !allow(p2)) return 'blocked';
-      for (const o of PLATS) if (o !== q && rectDist(o, p2.x, p2.y) < e.r - 1.5) return 'blocked';
+      for (const o of PLATS) if (o !== q && !(e.passSoft && o.soft) && rectDist(o, p2.x, p2.y) < e.r - 1.5) return 'blocked';
       e.plat = q; e.s = s2;
       return 'transfer';
     }
@@ -85,15 +85,15 @@ function attachTo(e, q) {
   for (let iter = 0; iter < 4; iter++) {
     let fixed = true;
     for (const o of PLATS) {
-      if (o !== e.plat && rectDist(o, e.x, e.y) < e.r - 0.5) { e.plat = o; e.s = sFromPoint(o, e.r, e.x, e.y); syncStuck(e); fixed = false; break; }
+      if (o !== e.plat && !(e.passSoft && o.soft) && rectDist(o, e.x, e.y) < e.r - 0.5) { e.plat = o; e.s = sFromPoint(o, e.r, e.x, e.y); syncStuck(e); fixed = false; break; }
     }
     if (fixed) break;
   }
 }
-function findCollision(x, y, r, exclude) {
+function findCollision(x, y, r, exclude, passSoft) {
   let best = null, bd = r;
   for (const p of PLATS) {
-    if (p === exclude) continue;
+    if (p === exclude || (passSoft && p.soft)) continue;
     const d = rectDist(p, x, y);
     if (d < bd) { bd = d; best = p; }
   }

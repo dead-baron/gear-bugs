@@ -48,7 +48,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-02T03:49:57Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-02T04:04:22Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -305,6 +305,7 @@ const SFX = {
       case 'release': this.tone(500, 320, 0.08, 'triangle', 0.1); break;
       case 'snap':    this.noise(0.08, 0.15, 2400, 0, 'highpass'); break;
       case 'fly':     this.tone(988, 988, 0.07, 'square', 0.12); this.tone(1480, 1480, 0.2, 'square', 0.12, 0.07); break;
+      case 'heart':   [880, 1175, 1568].forEach((f, i) => this.tone(f, f * 1.02, 0.12, 'triangle', 0.15, i * 0.07)); break;
       case 'reel':    this.tone(700, 1200, 0.15, 'triangle', 0.12); break;
       case 'powerup': [523, 659, 784, 1047, 1319].forEach((f, i) => { this.tone(f, f, 0.14, 'square', 0.12, i * 0.08); this.tone(f / 2, f / 2, 0.14, 'triangle', 0.11, i * 0.08); }); break;
       case 'trap':    this.noise(0.25, 0.22, 900); this.tone(300, 80, 0.3, 'square', 0.15); this.tone(1200, 1900, 0.2, 'triangle', 0.1, 0.1); break;
@@ -631,12 +632,12 @@ function crawlMove(e, delta, allow) {
   if (np.y < WORLD_TOP + e.r * 0.5) return 'blocked';
   if (allow && !allow(np)) return 'blocked';
   for (const q of PLATS) {
-    if (q === e.plat) continue;
+    if (q === e.plat || (e.passSoft && q.soft)) continue;
     if (rectDist(q, np.x, np.y) < e.r - 0.5) {
       const s2 = sFromPoint(q, e.r, np.x, np.y);
       const p2 = perim(q, e.r, s2);
       if (allow && !allow(p2)) return 'blocked';
-      for (const o of PLATS) if (o !== q && rectDist(o, p2.x, p2.y) < e.r - 1.5) return 'blocked';
+      for (const o of PLATS) if (o !== q && !(e.passSoft && o.soft) && rectDist(o, p2.x, p2.y) < e.r - 1.5) return 'blocked';
       e.plat = q; e.s = s2;
       return 'transfer';
     }
@@ -651,15 +652,15 @@ function attachTo(e, q) {
   for (let iter = 0; iter < 4; iter++) {
     let fixed = true;
     for (const o of PLATS) {
-      if (o !== e.plat && rectDist(o, e.x, e.y) < e.r - 0.5) { e.plat = o; e.s = sFromPoint(o, e.r, e.x, e.y); syncStuck(e); fixed = false; break; }
+      if (o !== e.plat && !(e.passSoft && o.soft) && rectDist(o, e.x, e.y) < e.r - 0.5) { e.plat = o; e.s = sFromPoint(o, e.r, e.x, e.y); syncStuck(e); fixed = false; break; }
     }
     if (fixed) break;
   }
 }
-function findCollision(x, y, r, exclude) {
+function findCollision(x, y, r, exclude, passSoft) {
   let best = null, bd = r;
   for (const p of PLATS) {
-    if (p === exclude) continue;
+    if (p === exclude || (passSoft && p.soft)) continue;
     const d = rectDist(p, x, y);
     if (d < bd) { bd = d; best = p; }
   }
@@ -729,6 +730,7 @@ const GROUND_Y = 320;
 function mkPlat(x, y, w, h, type, extra) {
   const p = Object.assign({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), type }, extra || {});
   p.wood = WOOD_TYPES.has(type);
+  p.soft = type === 'frond';          // palm leaves: the gecko slips straight through them
   return p;
 }
 function rectsOverlap(a, b, m = 0) { return a.x - m < b.x + b.w && a.x + a.w + m > b.x && a.y - m < b.y + b.h && a.y + a.h + m > b.y; }
@@ -1445,7 +1447,7 @@ function drawWidow(x, y, angle, facing, phase, o = {}) {
 function drawBee(x, y, facing, o = {}) {
   ctx.save(); ctx.translate(Math.round(x), Math.round(y));
   if (o.falling) ctx.rotate(T * 14);
-  ctx.scale(facing, 1);
+  ctx.scale(facing * 2, 2);   // bees are drawn at 2x
   const wing = Math.abs(Math.sin(T * 40)) * 3;
   ctx.fillStyle = 'rgba(230,245,255,0.75)';
   if (!o.falling) { ctx.fillRect(-2, -4 - wing, 3, 2 + wing); ctx.fillRect(1, -3 - wing * 0.8, 3, 2 + wing * 0.8); }
@@ -1471,6 +1473,29 @@ function drawHive(x, y, o = {}) {
   ctx.fillStyle = '#ffcf2a'; ctx.fillRect(4, 14, 2, 3); // honey drip
   if (o.frozen) { ctx.save(); ctx.scale(1.15, 2.4); drawCocoon(ctx, 13, 7); ctx.restore(); }
   ctx.restore();
+}
+
+/* ---------- Glowing red heart butterfly ---------- */
+function drawButterfly(x, y, seed, fade = 1) {
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(1.4, 1.4);
+  ctx.globalAlpha = (0.3 + 0.15 * Math.sin(T * 7 + seed)) * fade;
+  pxCircle(ctx, 0, 0, 11, '#ff2d4a');
+  ctx.globalAlpha = fade;
+  const flap = Math.abs(Math.sin(T * 16 + seed));
+  const w = 1 + flap * 5;
+  // wings (upper + lower lobes each side)
+  ctx.fillStyle = '#ff2d4a';
+  ctx.fillRect(-1 - w, -5, w, 5); ctx.fillRect(1, -5, w, 5);
+  ctx.fillStyle = '#c4102a';
+  ctx.fillRect(-1 - w * 0.75, 0, w * 0.75, 4); ctx.fillRect(1, 0, w * 0.75, 4);
+  ctx.fillStyle = '#ffb3c1';
+  if (w > 2.5) { ctx.fillRect(-w + 0.5, -4, 1.5, 1.5); ctx.fillRect(w - 1.5, -4, 1.5, 1.5); }
+  // body + antennae
+  ctx.fillStyle = '#2a0a12'; ctx.fillRect(-1, -5, 2, 9);
+  ctx.fillRect(-2, -7, 1, 2); ctx.fillRect(1, -7, 1, 2);
+  // tiny heart badge
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(-1, -3, 1, 1); ctx.fillRect(0, -3, 1, 1);
+  ctx.restore(); ctx.globalAlpha = 1;
 }
 
 /* ---------- Golden fly ---------- */
@@ -1910,8 +1935,9 @@ function drawRope(x, y, R) {
    ===================================================================== */
 let nextFlyId = 1;
 class Fly {
-  constructor(x, y, id) {
+  constructor(x, y, id, kind) {
     this.id = id || nextFlyId++;
+    this.heart = kind === 'heart'; this.life = this.heart ? 16 : Infinity; this.gone = false;
     this.x = x; this.y = y; const a = Math.random() * TAU; this.vx = Math.cos(a) * 40; this.vy = Math.sin(a) * 40;
     this.heading = a; this.t = Math.random() * 10; this.state = 'free'; this.reeler = null; this.age = 0;
     this.tx = x; this.ty = y; this.mirror = false;
@@ -1930,11 +1956,12 @@ class Fly {
       return;
     }
     // buzzing: wandering heading + jitter, bounce off platforms
-    this.heading += (Math.sin(this.t * 2.3) * 2.2 + (Math.random() - 0.5) * 6) * dt;
-    const spd = 42 + Math.sin(this.t * 1.7) * 14;
+    if (this.heart) { this.life -= dt; if (this.life <= 0) { this.gone = true; return; } }
+    this.heading += (Math.sin(this.t * 2.3) * 2.2 + (Math.random() - 0.5) * 6) * dt * (this.heart ? 1.6 : 1);
+    const spd = this.heart ? 92 + Math.sin(this.t * 3.1) * 28 : 42 + Math.sin(this.t * 1.7) * 14;
     this.vx = lerp(this.vx, Math.cos(this.heading) * spd, Math.min(1, dt * 3));
     this.vy = lerp(this.vy, Math.sin(this.heading) * spd, Math.min(1, dt * 3));
-    this.x += this.vx * dt; this.y += this.vy * dt + Math.sin(this.t * 9) * 0.3;
+    this.x += this.vx * dt; this.y += this.vy * dt + (this.heart ? Math.sin(this.t * 13) * 1.4 : Math.sin(this.t * 9) * 0.3);   // butterflies flutter
     if (pushOut(this, 5)) { this.heading = Math.atan2(this.vy, this.vx) + (Math.random() - 0.5); }
     const floor = Math.min(GROUND_Y - 10, WATER_Y - 18);
     if (this.x < 26) { this.x = 26; this.heading = (Math.random() - 0.5); }
@@ -1942,7 +1969,15 @@ class Fly {
     if (this.y < 26) { this.y = 26; this.heading = Math.PI / 2 + (Math.random() - 0.5); }
     if (this.y > floor) { this.y = floor; this.heading = -Math.PI / 2 + (Math.random() - 0.5); }
   }
-  draw() { drawFly(this.x, this.y); }
+  draw() { if (this.heart) drawButterfly(this.x, this.y, this.id, this.life < 2 ? clamp(this.life / 2, 0, 1) : 1); else drawFly(this.x, this.y); }
+}
+/* Heart butterfly: +1 heart (up to max); at full health it is still used up */
+function healSpider(W, sp, x, y) {
+  if (!sp || !sp.alive) return;
+  SFX.play('heart');
+  burst(W, x, y, 14, ['#ff2d4a', '#ffb3c1', '#ffffff'], 80, 0.5);
+  if (sp.hp < sp.maxHp) { sp.hp++; floater(W, x, y - 10, '+1 HEART', '#ff5a7a'); }
+  else floater(W, x, y - 10, 'FULL HEALTH', '#ffb3c1');
 }
 
 /* =====================================================================
@@ -2009,7 +2044,7 @@ function crawlerFly(e, dt, allow, W) {
     e.x += e.vx * sdt; e.y += e.vy * sdt;
     if (e.y < WORLD_TOP + e.r) { e.y = WORLD_TOP + e.r; if (e.vy < 0) e.vy = 0; }
     e.x = clamp(e.x, -30, REF_W + 30);
-    const q = findCollision(e.x, e.y, e.r, e.noStickT > 0 ? e.noStickPlat : null);
+    const q = findCollision(e.x, e.y, e.r, e.noStickT > 0 ? e.noStickPlat : null, e.passSoft);
     if (q) {
       const s = sFromPoint(q, e.r, e.x, e.y), p = perim(q, e.r, s);
       if (!allow || allow(p)) { e.plat = q; e.s = s; e.state = 'stuck'; e.vx = e.vy = 0; syncStuck(e); if (allow) {} else attachTo(e, q); return true; }
@@ -2177,7 +2212,7 @@ function drawTongue(e) {
 class Gecko extends Lizard {
   constructor(x, y) {
     super(x, y);
-    this.type = 'gecko'; this.r = 6; this.hitR = 12; this.tongueLen = 128; this.jumpCD = 1.5; this.stallT = 0; this.splashT = 0;
+    this.type = 'gecko'; this.passSoft = true; this.r = 6; this.hitR = 12; this.tongueLen = 128; this.jumpCD = 1.5; this.stallT = 0; this.splashT = 0;
   }
   update(dt, W) {
     if (this.mirror) { this.mirrorStep(dt, W); return; }
@@ -2363,7 +2398,7 @@ class Hive extends Enemy {
 class Bee extends Enemy {
   constructor(x, y, hive) {
     super('bee', x, y);
-    this.r = 4; this.hitR = 8; this.hive = hive; this.state = 'patrol'; this.t = Math.random() * 10; this.phase = Math.random() * TAU;
+    this.r = 7; this.hitR = 14; this.hive = hive; this.state = 'patrol'; this.t = Math.random() * 10; this.phase = Math.random() * TAU;
     this.lastSeen = null; this.lostT = 0; this.stateT = 0; this.fireCD = 4 + Math.random() * 3; this.vy = 30;
   }
   biteable() { return false; }
@@ -2403,11 +2438,11 @@ class Bee extends Enemy {
     }
     this.vx += Math.sin(this.t * 11) * 30 * dt; this.vy += Math.cos(this.t * 13) * 30 * dt;
     this.x += this.vx * dt; this.y += this.vy * dt;
-    pushOut(this, 5);
-    this.x = clamp(this.x, 8, REF_W - 8); this.y = clamp(this.y, 8, Math.min(GROUND_Y - 6, WATER_Y - 10));
+    pushOut(this, 9);
+    this.x = clamp(this.x, 10, REF_W - 10); this.y = clamp(this.y, 10, Math.min(GROUND_Y - 10, WATER_Y - 12));
     if (Math.abs(this.vx) > 5) this.facing = this.vx > 0 ? 1 : -1;
     // sting on contact
-    if (this.state === 'chase' && t && dist(this.x, this.y, t.x, t.y) < t.r + 5) {
+    if (this.state === 'chase' && t && dist(this.x, this.y, t.x, t.y) < t.r + 9) {
       W.hurt(t, 'sting', this);
       const a = Math.atan2(this.y - t.y, this.x - t.x);
       this.vx = Math.cos(a) * 150; this.vy = Math.sin(a) * 150 - 40;
@@ -2566,7 +2601,7 @@ class World {
   }
 
   /* ---------- flies ---------- */
-  spawnFly(id) {
+  spawnFly(id, kind) {
     for (let tries = 0; tries < 60; tries++) {
       const x = 40 + Math.random() * (REF_W - 80), y = 40 + Math.random() * 220;
       if (y > WATER_Y - 30) continue;
@@ -2574,9 +2609,9 @@ class World {
       let ok = true;
       for (const s of this.spiders) if (dist(x, y, s.x, s.y) < 70) ok = false;
       if (!ok) continue;
-      const f = new Fly(x, y, id);
+      const f = new Fly(x, y, id, kind);
       this.flies.push(f);
-      burst(this, x, y, 8, ['#fff3a0', '#ffd23f'], 50, 0.4, 0, 1);
+      burst(this, x, y, 8, kind === 'heart' ? ['#ff2d4a', '#ffb3c1'] : ['#fff3a0', '#ffd23f'], 50, 0.4, 0, 1);
       return f;
     }
     return null;
@@ -2584,6 +2619,7 @@ class World {
   collectFly(f, sp) {
     const i = this.flies.indexOf(f);
     if (i >= 0) this.flies.splice(i, 1);
+    if (f.heart) { if (this.rules.onHeart) this.rules.onHeart(sp, f); else healSpider(this, sp, f.x, f.y); return; }
     burst(this, f.x, f.y, 10, ['#ffd23f', '#fff3a0', '#ffffff'], 80, 0.5);
     if (this.rules.onFlyCollected) this.rules.onFlyCollected(sp, f);
   }
@@ -2600,10 +2636,11 @@ class World {
     this.updateEnemyShots(dt);
     if (this.authority) this.fire.update(dt, this);
     for (const f of this.flies.slice()) f.update(dt, this);
+    this.flies = this.flies.filter(f => !f.gone);
     // touching a fly collects it
     for (const s of this.spiders) {
       if (!s.alive) continue;
-      for (const f of this.flies.slice()) if (f.state === 'free' && dist(s.x, s.y, f.x, f.y) < s.r + 6) { SFX.play('fly'); this.collectFly(f, s); }
+      for (const f of this.flies.slice()) if (f.state === 'free' && dist(s.x, s.y, f.x, f.y) < s.r + (f.heart ? 9 : 6)) { if (!f.heart) SFX.play('fly'); this.collectFly(f, s); }
     }
     // bites: a powered spider touching a frozen enemy defeats it
     for (const s of this.spiders) {
@@ -2698,6 +2735,11 @@ class World {
     }
     ctx.restore();
   }
+  /* rare glowing red heart butterfly: random chance once `elapsed` passes 10 s */
+  maybeSpawnHeart(dt, elapsed) {
+    if (elapsed < 10 || this.flies.some(f => f.heart)) return;
+    if (Math.random() < dt / 22) this.spawnFly(undefined, 'heart');
+  }
   drawAmbient() {
     for (const a of this.ambient) {
       if (this.biome === 3) { if (a.x > 330 && a.y > 80) { ctx.globalAlpha = 0.35 + 0.3 * Math.sin(a.t * 2); ctx.fillStyle = '#ffe3a0'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; } continue; }
@@ -2769,8 +2811,8 @@ const Campaign = {
           SFX.play('powerup'); shake(0.2, 2);
           burst(C.W, sp.x, sp.y, 30, ['#ffd23f', '#fff3a0', '#ffffff'], 140, 0.9);
           C.banner = { text: 'POWERED UP!', sub: 'READY TO FIGHT! WEB THE ' + BIOMES[C.level].npc, t: 2.6, max: 2.6, color: '#ffd23f' };
-          for (const fl of C.W.flies) burst(C.W, fl.x, fl.y, 4, ['#fff3a0'], 30, 0.3);
-          C.W.flies.length = 0;
+          for (const fl of C.W.flies) if (!fl.heart) burst(C.W, fl.x, fl.y, 4, ['#fff3a0'], 30, 0.3);
+          C.W.flies = C.W.flies.filter(fl => fl.heart);
         }
       },
       onEnemyBite(e, sp) { if (sp.powered && e.alive) e.defeat(C.W, sp.slot); },
@@ -2811,8 +2853,9 @@ const Campaign = {
     W.aim = c.aim;
     W.step(dt, s => s === this.me && this.phase === 'play' ? c : NO_CONTROLS);
     // keep a couple of flies buzzing around until the spider is powered up
+    if (this.phase === 'play') W.maybeSpawnHeart(dt, this.time);
     if (this.me.flies < 5 && this.phase === 'play') {
-      const active = W.flies.length;
+      const active = W.flies.filter(f => !f.heart).length;
       if (active < Math.min(3, 5 - this.me.flies)) { this.flyT -= dt; if (this.flyT <= 0) { W.spawnFly(); this.flyT = 1.4; } }
     }
     if (this.banner) { this.banner.t -= dt; if (this.banner.t <= 0) this.banner = null; }
@@ -3865,6 +3908,11 @@ const VS = {
         if (V.isHost) V.awardFly(sp.slot, f);
         else if (sp === V.me) { V.claims.push(f.id); if (V.claims.length > 12) V.claims.shift(); V.W.claimed.set(f.id, V.W.time); floater(V.W, f.x, f.y - 10, '+1', '#ffd23f'); }
       },
+      onHeart(sp, f) {
+        if (V.phase !== 'play') return;
+        if (sp.local) healSpider(V.W, sp, f.x, f.y);
+        if (!V.isHost && sp === V.me) { V.claims.push(f.id); if (V.claims.length > 12) V.claims.shift(); V.W.claimed.set(f.id, V.W.time); }
+      },
       onPvPHit(shooter, target) {
         const k = shooter.dmg[target.id] || (shooter.dmg[target.id] = [0, 0]);
         if (shooter.powered) { k[1]++; SFX.play('trap'); floater(V.W, target.x, target.y - 16, 'FROZEN!', '#ffffff'); }
@@ -3937,7 +3985,8 @@ const VS = {
       const aliveTeams = new Set(this.roster.filter(r => alive[r.slot]).map(r => this.teamOf(r.slot)));
       if ((teams.size >= 2 && aliveTeams.size <= 1) || this.phaseT <= 0) this.endRound(alive, aliveTeams);
       // keep flies buzzing
-      if (this.W.flies.length < 4) { this.flyT -= dt; if (this.flyT <= 0) { this.W.spawnFly(); this.flyT = 1.5; } }
+      if (this.W.flies.filter(f => !f.heart).length < 4) { this.flyT -= dt; if (this.flyT <= 0) { this.W.spawnFly(); this.flyT = 1.5; } }
+      this.W.maybeSpawnHeart(dt, VS_ROUND_TIME - this.phaseT);
       for (const r of this.respawns) { r.t -= dt; if (r.t <= 0) { r.done = true; this.spawnHazard(this.rn); } }
       this.respawns = this.respawns.filter(r => !r.done);
     } else if (this.phase === 'result' && this.phaseT <= 0) {
@@ -4004,7 +4053,7 @@ const VS = {
     };
     const w = { m };
     if (this.W && this.phase !== 'wait') {
-      w.fl = this.W.flies.filter(f => f.state === 'free').map(f => [f.id, nX(f.x), nY(f.y)]);
+      w.fl = this.W.flies.filter(f => f.state === 'free').map(f => [f.id, nX(f.x), nY(f.y), f.heart ? 1 : 0]);
       w.en = this.W.enemies.filter(e => e.alive).map(e => [e.id, ENEMY_CODES[e.type], nX(e.x), nY(e.y), Math.round((e.drawAngle || 0) * 100), e.facing || 1,
         Math.round(e.frozenT * 10), (e.windup > 0 ? 1 : 0) | (e.tongueT >= 0 || e.windup > 0 || e.breathT > 0 ? 2 : 0) | (e.state === 'air' ? 4 : 0) | (e.invisible ? 8 : 0) | (e.breathT > 0 ? 16 : 0) | (e.state === 'fall' ? 32 : 0),
         Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100), Math.round((e.spawnT || 0) * 10)]);
@@ -4029,7 +4078,7 @@ const VS = {
           if (done.has(fid)) continue;
           done.add(fid);
           const f = this.W.flies.find(q => q.id === fid);
-          if (f) { this.W.flies.splice(this.W.flies.indexOf(f), 1); this.awardFly(r.slot, f); }
+          if (f) { this.W.flies.splice(this.W.flies.indexOf(f), 1); if (!f.heart) this.awardFly(r.slot, f); }
         }
         if (!d.al) this.creditDeath(r.slot, d.kb);
       }
@@ -4094,11 +4143,11 @@ const VS = {
     if (!W || m.ph === 'wait') return;
     // flies
     const seen = new Set();
-    for (const [id, x, y] of w.fl || []) {
+    for (const [id, x, y, kind] of w.fl || []) {
       seen.add(id);
       if (W.claimed.has(id)) continue;
       let f = W.flies.find(q => q.id === id);
-      if (!f) { f = new Fly(dX(x), dY(y), id); f.mirror = true; W.flies.push(f); }
+      if (!f) { f = new Fly(dX(x), dY(y), id, kind ? 'heart' : undefined); f.mirror = true; f.life = Infinity; W.flies.push(f); }
       f.tx = dX(x); f.ty = dY(y);
     }
     W.flies = W.flies.filter(f => seen.has(f.id) && !W.claimed.has(f.id) || f.state === 'reel');

@@ -199,7 +199,7 @@ function drawWidow(x, y, angle, facing, phase, o = {}) {
 function drawBee(x, y, facing, o = {}) {
   ctx.save(); ctx.translate(Math.round(x), Math.round(y));
   if (o.falling) ctx.rotate(T * 14);
-  ctx.scale(facing, 1);
+  ctx.scale(facing * 2, 2);   // bees are drawn at 2x
   const wing = Math.abs(Math.sin(T * 40)) * 3;
   ctx.fillStyle = 'rgba(230,245,255,0.75)';
   if (!o.falling) { ctx.fillRect(-2, -4 - wing, 3, 2 + wing); ctx.fillRect(1, -3 - wing * 0.8, 3, 2 + wing * 0.8); }
@@ -225,6 +225,29 @@ function drawHive(x, y, o = {}) {
   ctx.fillStyle = '#ffcf2a'; ctx.fillRect(4, 14, 2, 3); // honey drip
   if (o.frozen) { ctx.save(); ctx.scale(1.15, 2.4); drawCocoon(ctx, 13, 7); ctx.restore(); }
   ctx.restore();
+}
+
+/* ---------- Glowing red heart butterfly ---------- */
+function drawButterfly(x, y, seed, fade = 1) {
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(1.4, 1.4);
+  ctx.globalAlpha = (0.3 + 0.15 * Math.sin(T * 7 + seed)) * fade;
+  pxCircle(ctx, 0, 0, 11, '#ff2d4a');
+  ctx.globalAlpha = fade;
+  const flap = Math.abs(Math.sin(T * 16 + seed));
+  const w = 1 + flap * 5;
+  // wings (upper + lower lobes each side)
+  ctx.fillStyle = '#ff2d4a';
+  ctx.fillRect(-1 - w, -5, w, 5); ctx.fillRect(1, -5, w, 5);
+  ctx.fillStyle = '#c4102a';
+  ctx.fillRect(-1 - w * 0.75, 0, w * 0.75, 4); ctx.fillRect(1, 0, w * 0.75, 4);
+  ctx.fillStyle = '#ffb3c1';
+  if (w > 2.5) { ctx.fillRect(-w + 0.5, -4, 1.5, 1.5); ctx.fillRect(w - 1.5, -4, 1.5, 1.5); }
+  // body + antennae
+  ctx.fillStyle = '#2a0a12'; ctx.fillRect(-1, -5, 2, 9);
+  ctx.fillRect(-2, -7, 1, 2); ctx.fillRect(1, -7, 1, 2);
+  // tiny heart badge
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(-1, -3, 1, 1); ctx.fillRect(0, -3, 1, 1);
+  ctx.restore(); ctx.globalAlpha = 1;
 }
 
 /* ---------- Golden fly ---------- */

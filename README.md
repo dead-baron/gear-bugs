@@ -21,6 +21,8 @@ Travel across a Super Mario World–style map. Locked areas stay hidden under fo
 | 3 | Tropical Island | **Gecko**: fast, jumps a lot, climbs every surface and has a very long tongue. The sea on both sides is instant defeat |
 | 4 | Old Barn & Wheat Field | **Black Widow**: a boss that dashes or pounces when it sees you, spits webs that stun you (mash buttons to break free), and kills with one bite |
 
+Now and then a rare **glowing red butterfly** flutters in after the first 10 seconds. Grab it or web it to win back a heart.
+
 In every level, catch **5 golden flies** to power up (web a fly to reel it in). Then web the enemy to trap it and crawl over to bite it. It drops a **Star Coin**, which you keep for good in your inventory. Beat the Black Widow to reach the ending screen.
 
 The difficulties are **Easy, Medium, Hard and HELL MODE**. In HELL MODE enemies react almost instantly, have glowing red eyes and sometimes breathe fire. The fire slowly spreads along wooden platforms.

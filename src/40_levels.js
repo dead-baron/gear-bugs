@@ -24,6 +24,7 @@ const GROUND_Y = 320;
 function mkPlat(x, y, w, h, type, extra) {
   const p = Object.assign({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), type }, extra || {});
   p.wood = WOOD_TYPES.has(type);
+  p.soft = type === 'frond';          // palm leaves: the gecko slips straight through them
   return p;
 }
 function rectsOverlap(a, b, m = 0) { return a.x - m < b.x + b.w && a.x + a.w + m > b.x && a.y - m < b.y + b.h && a.y + a.h + m > b.y; }

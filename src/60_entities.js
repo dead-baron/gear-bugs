@@ -385,8 +385,9 @@ function drawRope(x, y, R) {
    ===================================================================== */
 let nextFlyId = 1;
 class Fly {
-  constructor(x, y, id) {
+  constructor(x, y, id, kind) {
     this.id = id || nextFlyId++;
+    this.heart = kind === 'heart'; this.life = this.heart ? 16 : Infinity; this.gone = false;
     this.x = x; this.y = y; const a = Math.random() * TAU; this.vx = Math.cos(a) * 40; this.vy = Math.sin(a) * 40;
     this.heading = a; this.t = Math.random() * 10; this.state = 'free'; this.reeler = null; this.age = 0;
     this.tx = x; this.ty = y; this.mirror = false;
@@ -405,11 +406,12 @@ class Fly {
       return;
     }
     // buzzing: wandering heading + jitter, bounce off platforms
-    this.heading += (Math.sin(this.t * 2.3) * 2.2 + (Math.random() - 0.5) * 6) * dt;
-    const spd = 42 + Math.sin(this.t * 1.7) * 14;
+    if (this.heart) { this.life -= dt; if (this.life <= 0) { this.gone = true; return; } }
+    this.heading += (Math.sin(this.t * 2.3) * 2.2 + (Math.random() - 0.5) * 6) * dt * (this.heart ? 1.6 : 1);
+    const spd = this.heart ? 92 + Math.sin(this.t * 3.1) * 28 : 42 + Math.sin(this.t * 1.7) * 14;
     this.vx = lerp(this.vx, Math.cos(this.heading) * spd, Math.min(1, dt * 3));
     this.vy = lerp(this.vy, Math.sin(this.heading) * spd, Math.min(1, dt * 3));
-    this.x += this.vx * dt; this.y += this.vy * dt + Math.sin(this.t * 9) * 0.3;
+    this.x += this.vx * dt; this.y += this.vy * dt + (this.heart ? Math.sin(this.t * 13) * 1.4 : Math.sin(this.t * 9) * 0.3);   // butterflies flutter
     if (pushOut(this, 5)) { this.heading = Math.atan2(this.vy, this.vx) + (Math.random() - 0.5); }
     const floor = Math.min(GROUND_Y - 10, WATER_Y - 18);
     if (this.x < 26) { this.x = 26; this.heading = (Math.random() - 0.5); }
@@ -417,7 +419,15 @@ class Fly {
     if (this.y < 26) { this.y = 26; this.heading = Math.PI / 2 + (Math.random() - 0.5); }
     if (this.y > floor) { this.y = floor; this.heading = -Math.PI / 2 + (Math.random() - 0.5); }
   }
-  draw() { drawFly(this.x, this.y); }
+  draw() { if (this.heart) drawButterfly(this.x, this.y, this.id, this.life < 2 ? clamp(this.life / 2, 0, 1) : 1); else drawFly(this.x, this.y); }
+}
+/* Heart butterfly: +1 heart (up to max); at full health it is still used up */
+function healSpider(W, sp, x, y) {
+  if (!sp || !sp.alive) return;
+  SFX.play('heart');
+  burst(W, x, y, 14, ['#ff2d4a', '#ffb3c1', '#ffffff'], 80, 0.5);
+  if (sp.hp < sp.maxHp) { sp.hp++; floater(W, x, y - 10, '+1 HEART', '#ff5a7a'); }
+  else floater(W, x, y - 10, 'FULL HEALTH', '#ffb3c1');
 }
 
 /* =====================================================================
@@ -484,7 +494,7 @@ function crawlerFly(e, dt, allow, W) {
     e.x += e.vx * sdt; e.y += e.vy * sdt;
     if (e.y < WORLD_TOP + e.r) { e.y = WORLD_TOP + e.r; if (e.vy < 0) e.vy = 0; }
     e.x = clamp(e.x, -30, REF_W + 30);
-    const q = findCollision(e.x, e.y, e.r, e.noStickT > 0 ? e.noStickPlat : null);
+    const q = findCollision(e.x, e.y, e.r, e.noStickT > 0 ? e.noStickPlat : null, e.passSoft);
     if (q) {
       const s = sFromPoint(q, e.r, e.x, e.y), p = perim(q, e.r, s);
       if (!allow || allow(p)) { e.plat = q; e.s = s; e.state = 'stuck'; e.vx = e.vy = 0; syncStuck(e); if (allow) {} else attachTo(e, q); return true; }
@@ -652,7 +662,7 @@ function drawTongue(e) {
 class Gecko extends Lizard {
   constructor(x, y) {
     super(x, y);
-    this.type = 'gecko'; this.r = 6; this.hitR = 12; this.tongueLen = 128; this.jumpCD = 1.5; this.stallT = 0; this.splashT = 0;
+    this.type = 'gecko'; this.passSoft = true; this.r = 6; this.hitR = 12; this.tongueLen = 128; this.jumpCD = 1.5; this.stallT = 0; this.splashT = 0;
   }
   update(dt, W) {
     if (this.mirror) { this.mirrorStep(dt, W); return; }
@@ -838,7 +848,7 @@ class Hive extends Enemy {
 class Bee extends Enemy {
   constructor(x, y, hive) {
     super('bee', x, y);
-    this.r = 4; this.hitR = 8; this.hive = hive; this.state = 'patrol'; this.t = Math.random() * 10; this.phase = Math.random() * TAU;
+    this.r = 7; this.hitR = 14; this.hive = hive; this.state = 'patrol'; this.t = Math.random() * 10; this.phase = Math.random() * TAU;
     this.lastSeen = null; this.lostT = 0; this.stateT = 0; this.fireCD = 4 + Math.random() * 3; this.vy = 30;
   }
   biteable() { return false; }
@@ -878,11 +888,11 @@ class Bee extends Enemy {
     }
     this.vx += Math.sin(this.t * 11) * 30 * dt; this.vy += Math.cos(this.t * 13) * 30 * dt;
     this.x += this.vx * dt; this.y += this.vy * dt;
-    pushOut(this, 5);
-    this.x = clamp(this.x, 8, REF_W - 8); this.y = clamp(this.y, 8, Math.min(GROUND_Y - 6, WATER_Y - 10));
+    pushOut(this, 9);
+    this.x = clamp(this.x, 10, REF_W - 10); this.y = clamp(this.y, 10, Math.min(GROUND_Y - 10, WATER_Y - 12));
     if (Math.abs(this.vx) > 5) this.facing = this.vx > 0 ? 1 : -1;
     // sting on contact
-    if (this.state === 'chase' && t && dist(this.x, this.y, t.x, t.y) < t.r + 5) {
+    if (this.state === 'chase' && t && dist(this.x, this.y, t.x, t.y) < t.r + 9) {
       W.hurt(t, 'sting', this);
       const a = Math.atan2(this.y - t.y, this.x - t.x);
       this.vx = Math.cos(a) * 150; this.vy = Math.sin(a) * 150 - 40;

@@ -48,7 +48,7 @@ class World {
   }
 
   /* ---------- flies ---------- */
-  spawnFly(id) {
+  spawnFly(id, kind) {
     for (let tries = 0; tries < 60; tries++) {
       const x = 40 + Math.random() * (REF_W - 80), y = 40 + Math.random() * 220;
       if (y > WATER_Y - 30) continue;
@@ -56,9 +56,9 @@ class World {
       let ok = true;
       for (const s of this.spiders) if (dist(x, y, s.x, s.y) < 70) ok = false;
       if (!ok) continue;
-      const f = new Fly(x, y, id);
+      const f = new Fly(x, y, id, kind);
       this.flies.push(f);
-      burst(this, x, y, 8, ['#fff3a0', '#ffd23f'], 50, 0.4, 0, 1);
+      burst(this, x, y, 8, kind === 'heart' ? ['#ff2d4a', '#ffb3c1'] : ['#fff3a0', '#ffd23f'], 50, 0.4, 0, 1);
       return f;
     }
     return null;
@@ -66,6 +66,7 @@ class World {
   collectFly(f, sp) {
     const i = this.flies.indexOf(f);
     if (i >= 0) this.flies.splice(i, 1);
+    if (f.heart) { if (this.rules.onHeart) this.rules.onHeart(sp, f); else healSpider(this, sp, f.x, f.y); return; }
     burst(this, f.x, f.y, 10, ['#ffd23f', '#fff3a0', '#ffffff'], 80, 0.5);
     if (this.rules.onFlyCollected) this.rules.onFlyCollected(sp, f);
   }
@@ -82,10 +83,11 @@ class World {
     this.updateEnemyShots(dt);
     if (this.authority) this.fire.update(dt, this);
     for (const f of this.flies.slice()) f.update(dt, this);
+    this.flies = this.flies.filter(f => !f.gone);
     // touching a fly collects it
     for (const s of this.spiders) {
       if (!s.alive) continue;
-      for (const f of this.flies.slice()) if (f.state === 'free' && dist(s.x, s.y, f.x, f.y) < s.r + 6) { SFX.play('fly'); this.collectFly(f, s); }
+      for (const f of this.flies.slice()) if (f.state === 'free' && dist(s.x, s.y, f.x, f.y) < s.r + (f.heart ? 9 : 6)) { if (!f.heart) SFX.play('fly'); this.collectFly(f, s); }
     }
     // bites: a powered spider touching a frozen enemy defeats it
     for (const s of this.spiders) {
@@ -179,6 +181,11 @@ class World {
       ctx.fillStyle = me.powered ? '#ffd23f' : '#ffffff'; ctx.fillRect(cx - 4, cy, 3, 1); ctx.fillRect(cx + 2, cy, 3, 1); ctx.fillRect(cx, cy - 4, 1, 3); ctx.fillRect(cx, cy + 2, 1, 3);
     }
     ctx.restore();
+  }
+  /* rare glowing red heart butterfly: random chance once `elapsed` passes 10 s */
+  maybeSpawnHeart(dt, elapsed) {
+    if (elapsed < 10 || this.flies.some(f => f.heart)) return;
+    if (Math.random() < dt / 22) this.spawnFly(undefined, 'heart');
   }
   drawAmbient() {
     for (const a of this.ambient) {
