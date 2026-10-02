@@ -130,7 +130,8 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 362, 560), randInt(r, 120, 220), w, 10, 'plank'); }, 1);
     tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 360, 600), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
     tryPlace(() => { const w = randInt(r, 40, 56), h = randInt(r, 24, 30); const c = mkPlat(xIn(w, 60, 600), gTop - h, w, h, 'hay'); c.touch = [ground]; return c; }, 2);
-    L.enemySpawn = { x: 560, y: gTop - 10 };
+    const beam = P.find(p => p.type === 'beam');
+    L.enemySpawn = { x: beam.x + beam.w / 2 + 20, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
   }
   // Guarantee at least two high anchors for rope swinging
   let high = P.filter(p => !frame.includes(p) && p.y < 160).length;

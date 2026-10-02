@@ -273,7 +273,7 @@ const VS = {
     if (rn === 0) W.enemies.push(new Lizard(320, L.spawns[0].y));
     else if (rn === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y, { invulnerable: true }));
     else if (rn === 2) W.enemies.push(new Gecko(320, L.spawns[0].y));
-    else W.enemies.push(new Widow(470, L.spawns[0].y, { speedMul: 0.75 }));
+    else W.enemies.push(new Widow(L.enemySpawn.x, L.enemySpawn.y, { speedMul: 0.75, plat: L.enemySpawn.plat }));
   },
   rules() {
     const V = this;
@@ -425,7 +425,7 @@ const VS = {
       w.fl = this.W.flies.filter(f => f.state === 'free').map(f => [f.id, nX(f.x), nY(f.y)]);
       w.en = this.W.enemies.filter(e => e.alive).map(e => [e.id, ENEMY_CODES[e.type], nX(e.x), nY(e.y), Math.round((e.drawAngle || 0) * 100), e.facing || 1,
         Math.round(e.frozenT * 10), (e.windup > 0 ? 1 : 0) | (e.tongueT >= 0 || e.windup > 0 || e.breathT > 0 ? 2 : 0) | (e.state === 'air' ? 4 : 0) | (e.invisible ? 8 : 0) | (e.breathT > 0 ? 16 : 0) | (e.state === 'fall' ? 32 : 0),
-        Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100)]);
+        Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100), Math.round((e.spawnT || 0) * 10)]);
       w.b = [];
       for (const { body } of this.bots.values()) { const bp = this.presenceOf(body); bp.id = body.id; w.b.push(bp); }
       w.nh = this.npcHits;
@@ -533,7 +533,7 @@ const VS = {
       e.tx = dX(a[2]); e.ty = dY(a[3]); e.drawAngle = a[4] / 100; e.facing = a[5]; e.frozenT = a[6] / 10;
       const fl = a[7];
       e.windup = fl & 1 ? 0.1 : 0; e.breathT = fl & 16 ? 0.1 : 0; e.state = fl & 32 ? 'fall' : fl & 4 ? 'air' : 'stuck'; e.invisible = !!(fl & 8);
-      e.tongueAng = a[8] / 100; e.netExt = a[9]; e.headRel = a[10] / 100; e.alive = true;
+      e.tongueAng = a[8] / 100; e.netExt = a[9]; e.headRel = a[10] / 100; e.spawnT = (a[11] || 0) / 10; e.alive = true;
     }
     W.enemies = W.enemies.filter(e => eseen.has(e.netId));
     // bots (host-simulated) appear as remote spiders

@@ -15,7 +15,7 @@ const Campaign = {
     if (level === 0) W.enemies.push(new Lizard(es.x, es.y));
     else if (level === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y));
     else if (level === 2) W.enemies.push(new Gecko(es.x, es.y));
-    else W.enemies.push(new Widow(es.x, es.y));
+    else W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
     this.boss = W.enemies[0];
     for (let i = 0; i < 2; i++) W.spawnFly();
     const B = BIOMES[level];

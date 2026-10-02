@@ -295,7 +295,7 @@ function aimVector(sp, shoot, c, W) {
     if (dot > bestDot && lineOfSight(sp.x, sp.y, x, y)) { bestDot = dot; best = { x: ex / d, y: ey / d }; }
   };
   for (const f of W.flies) if (f.state === 'free') consider(f.x, f.y);
-  for (const e of W.enemies) if (e.alive && e.type !== 'hive') consider(e.x, e.y);
+  for (const e of W.enemies) if (e.alive && e.type !== 'hive' && e.webbable()) consider(e.x, e.y);
   if (W.mode === 'vs') for (const o of W.allSpiders()) if (o !== sp && o.alive && o.team !== sp.team) consider(o.x, o.y);
   return best || { x: dx, y: dy };
 }
@@ -710,12 +710,26 @@ class Widow extends Enemy {
     super('widow', x, y);
     this.r = 10; this.hitR = 16; this.state = 'air'; this.plat = null; this.s = 0; this.sv = 0; this.nx = 0; this.ny = -1;
     this.walk = 0; this.attackCD = 2.2; this.windup = 0; this.dashT = 0; this.webCD = 3; this.jumpCD = 1; this.stallT = 0; this.breathT = 0;
-    this.speedMul = opts.speedMul || 1; this.spawn = { x, y }; this.dormant = opts.dormant !== undefined ? opts.dormant : 2.5; this.recoverT = 0;
-    const q = findCollision(x, y + 6, this.r + 8); if (q) { attachTo(this, q); this.state = 'stuck'; }
+    this.speedMul = opts.speedMul || 1; this.spawn = { x, y }; this.dormant = 0; this.recoverT = 0;
+    this.spawnT = opts.spawnDelay !== undefined ? opts.spawnDelay : 5;   // arrival countdown, blinks for the last 1.5 s
+    if (opts.plat) { attachTo(this, opts.plat); this.state = 'stuck'; }
+    else { const q = findCollision(x, y + 6, this.r + 8); if (q) { attachTo(this, q); this.state = 'stuck'; } }
+    this.drawAngle = this.state === 'stuck' ? Math.atan2(this.ny, this.nx) + Math.PI / 2 : 0;
   }
+  webbable() { return this.spawnT <= 0; }
+  biteable() { return this.frozenT > 0 && this.spawnT <= 0; }
   cancelAttacks() { this.windup = 0; this.dashT = 0; this.breathT = 0; }
   update(dt, W) {
     if (this.mirror) { this.glide(dt); return; }
+    if (this.spawnT > 0) {
+      // not here yet: count down, then blink into the barn
+      const before = Math.ceil(this.spawnT);
+      this.spawnT -= dt;
+      if (Math.ceil(this.spawnT) !== before && this.spawnT > 0) SFX.play('count');
+      if (this.spawnT <= 0) { this.spawnT = 0; SFX.play('shriek'); shake(0.25, 3); burst(W, this.x, this.y, 20, ['#14141c', '#e8102a', '#3a3a52'], 90, 0.6); this.attackCD = 1.5; this.webCD = 2.5; }
+      if (this.state === 'stuck') syncStuck(this);
+      return;
+    }
     const D = W.D, frozen = this.tickFrozen(dt, W);
     const t = W.nearestTarget(this.x, this.y);
     this.attackCD -= dt; this.webCD -= dt; this.jumpCD -= dt; this.recoverT -= dt;
@@ -772,6 +786,15 @@ class Widow extends Enemy {
   burstColors() { return ['#14141c', '#e8102a', '#ffffff', '#3a3a52']; }
   draw(W) {
     if (!this.alive) return;
+    if (this.spawnT > 0) {
+      // arrival warning: countdown marker, then the widow blinks in
+      const n = Math.ceil(this.spawnT);
+      ctx.globalAlpha = 0.35 + 0.25 * Math.sin(T * 10);
+      pxCircle(ctx, this.x, this.y, 14, '#e8102a');
+      ctx.globalAlpha = 1;
+      drawText('BLACK WIDOW IN ' + n, this.x, this.y + (this.ny > 0.5 ? 18 : -34), 1, '#ff5a7a', 'center', null, '#140c26');
+      if (this.spawnT > 1.5 || Math.floor(this.spawnT * 8) % 2 === 0) return;
+    }
     drawWidow(this.x, this.y, this.drawAngle, this.facing, this.walk, { frozen: this.frozenT > 0, shiver: this.frozenT > 0 && this.frozenT < 1.5, air: this.state === 'air', windup: this.windup > 0, hell: W.D.hell, mouthOpen: this.breathT > 0 });
     this.drawFreezeBar(W);
   }
