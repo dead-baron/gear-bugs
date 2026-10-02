@@ -38,7 +38,7 @@ const VS = {
     this.scores = [0, 1, 2, 3].map(() => this.blankScore());
     this.W = null; this.me = null; this.bots = new Map(); this.applied = {}; this.npcHits = {}; this.claims = []; this.processed = {}; this.credited = {};
     this.pres = new Map(); this.msg = ''; this.msgT = 0; this.searchT = 0; this.botWhileWaiting = false; this.finalT = 0; this.rematchClosed = false;
-    this.roundRes = null; this.respawns = []; this.biteCD = {}; this.hostId = null; this.banner = null; this.autoT = -1; this.waitStart = nowMs();
+    this.roundRes = null; this.respawns = []; this.biteCD = {}; this.hostId = null; this.banner = null; this.autoT = -1; this.waitStart = nowMs(); this.ready = false;
     this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0 };
   },
   blankScore() { return { pts: 0, fl: 0, kills: 0, npc: 0, wins: 0, rp: 0 }; },
@@ -59,6 +59,12 @@ const VS = {
     const q = this.searchNet = new QuickMatchAdapter();
     this.wireNet(q);
     q.on('matched', (code, role) => this.onMatched(q, code, role));
+    q.on('requeue', () => {
+      // couldn't get into that lobby (full / unreachable): keep searching
+      if (this.botWhileWaiting) return;
+      this.sub = 'searching'; this.isHost = false; this.roster = []; this.ready = false; this.autoT = -1;
+      this.flash('LOBBY UNAVAILABLE - STILL SEARCHING');
+    });
     q.search();
     track('game_start', { mode: 'quick' });
   },
@@ -109,10 +115,10 @@ const VS = {
     this.scores = [0, 1, 2, 3].map(() => this.blankScore());
     this.net = q; this.code = code;
     this.isHost = role === 'host';
-    if (this.isHost) { this.sub = 'wait'; this.mySlot = 0; this.initHostLobby(); }
-    else { this.sub = 'connecting'; }
+    this.ready = false; this.autoT = -1;
+    if (this.isHost) { this.sub = 'wait'; this.mySlot = 0; this.initHostLobby(); this.flash('PLAYERS FOUND - LOBBY OPEN'); }
+    else { this.sub = 'connecting'; this.roster = []; this.flash('LOBBY FOUND - JOINING'); }
     SFX.play('join');
-    this.flash('PLAYERS FOUND!');
   },
   wireNet(n) {
     n.on('status', () => {
@@ -125,13 +131,13 @@ const VS = {
       }
     });
     n.on('join', (id, slot) => this.onJoin(n, id, slot));
-    n.on('linked', (slot, hostId) => { if (n !== this.net) return; this.mySlot = slot; this.hostId = hostId; this.myId = n.selfId; this.sub = 'wait'; SFX.play('join'); });
+    n.on('linked', (slot, hostId) => { if (n !== this.net) return; this.mySlot = slot; this.hostId = hostId; this.myId = n.selfId; this.sub = 'wait'; SFX.play('join'); if (this.kind === 'quick') this.flash('JOINED THE LOBBY!'); });
     n.on('state', (id, d) => { if (n === this.net) this.onPresence(id, d); });
     n.on('fire', (id, d) => { if (n === this.net) this.onFire(id, d); });
     n.on('snapshot', (w, id) => { if (n === this.net && !this.isHost) this.onSnapshot(w); });
     n.on('leave', (id, why) => { if (n === this.net) this.onLeave(id, why); });
     n.on('hostleft', () => { if (n !== this.net) return; this.flash('HOST LEFT THE MATCH'); this.endToMenu(2.5); });
-    n.on('full', () => { if (n !== this.net) return; if (this.kind === 'quick') { this.flash('LOBBY FULL - SEARCHING AGAIN'); this.sub = 'searching'; n.mode = 'seek'; n.search(); } else { this.flash('ROOM FULL OR MATCH IN PROGRESS'); this.endToMenu(2.5); } });
+    n.on('full', () => { if (n !== this.net) return; if (this.kind === 'quick') return; else { this.flash('ROOM FULL OR MATCH IN PROGRESS'); this.endToMenu(2.5); } });
     n.on('code', c => { this.code = c; this.flash('NEW ROOM CODE ' + c); });
     n.on('error', e => { if (n !== this.net && n !== this.searchNet) return; this.flash(e === 'lib' ? "COULDN'T LOAD MULTIPLAYER" : 'NETWORK ERROR'); if (e === 'lib') this.endToMenu(3); });
   },
@@ -165,7 +171,8 @@ const VS = {
     this.roster.push({ slot, id, name: 'P' + (slot + 1), style: { c: SLOT_COLORS[slot], h: 0, p: 0 }, bot: false });
     this.roster.sort((a, b) => a.slot - b.slot);
     SFX.play('join'); this.flash('P' + (slot + 1) + ' JOINED');
-    if (this.humans().length >= 4 && this.phase === 'wait') this.autoT = Math.min(this.autoT < 0 ? 3 : this.autoT, 3);
+    if (this.kind === 'quick' && this.phase === 'wait' && this.autoT >= 0) this.autoT = Math.max(this.autoT, 15);   // give the newcomer time
+    if (this.kind !== 'quick' && this.humans().length >= 4 && this.phase === 'wait') this.autoT = Math.min(this.autoT < 0 ? 3 : this.autoT, 3);
   },
   onLeave(id, why) {
     const W = this.W;
@@ -397,7 +404,7 @@ const VS = {
   },
   buildPresence() {
     if (this.phase === 'final' || this.sub === 'wait' || !this.me) {
-      const p = { v: 1, on: this.phase === 'final' ? 0 : 1, s: this.mySlot, nm: 'P' + (this.mySlot + 1), cz: [save.style.c, save.style.h, save.style.p], dr: this.rn };
+      const p = { v: 1, on: this.phase === 'final' ? 0 : 1, s: this.mySlot, nm: 'P' + (this.mySlot + 1), cz: [save.style.c, save.style.h, save.style.p], dr: this.rn, rdy: this.ready ? 1 : 0 };
       if (this.isHost) p.w = this.buildWorld();
       return p;
     }
@@ -409,7 +416,7 @@ const VS = {
   buildWorld() {
     const m = {
       ph: this.phase, rn: this.rn, t: Math.round(this.phaseT * 10) / 10, mode: this.mode, sd: this.seeds, cd: this.autoT,
-      ro: this.roster.map(r => [r.slot, r.id, r.name, (r.eff || r.style).c, (r.eff || r.style).h, (r.eff || r.style).p, r.bot ? 1 : 0]),
+      ro: this.roster.map(r => [r.slot, r.id, r.name, (r.eff || r.style).c, (r.eff || r.style).h, (r.eff || r.style).p, r.bot ? 1 : 0, (r.slot === this.mySlot ? this.ready : r.ready) ? 1 : 0]),
       sc: this.scores.map(s => [s.pts, s.fl, s.kills, s.npc, s.wins, s.rp]),
       res: this.roundRes ? [this.roundRes.res, this.roundRes.why, this.roundRes.team] : 0, rc: this.rematchClosed ? 1 : 0,
     };
@@ -431,6 +438,7 @@ const VS = {
     if (d.x !== undefined) this.lastPos[id] = { x: dX(d.x), y: dY(d.y), al: d.al };
     if (this.isHost) {
       const r = this.roster.find(x => x.id === id);
+      if (r && !r.bot && this.phase === 'wait') r.ready = !!d.rdy;
       if (r && d.cz && !r.bot) { const changed = r.style.c !== d.cz[0] || r.style.h !== d.cz[1] || r.style.p !== d.cz[2]; r.style = { c: d.cz[0] | 0, h: d.cz[1] | 0, p: d.cz[2] | 0 }; if (changed) this.effectiveStyles(); }
       if (r && this.W && this.phase === 'play' && d.dr === this.rn) {
         // fly claims
@@ -489,7 +497,7 @@ const VS = {
     if (!m) return;
     const prevPhase = this.phase, prevRn = this.rn;
     this.mode = m.mode; this.seeds = m.sd || []; this.autoT = m.cd;
-    this.roster = (m.ro || []).map(a => ({ slot: a[0], id: a[1], name: a[2], style: { c: a[3], h: a[4], p: a[5] }, eff: { c: a[3], h: a[4], p: a[5] }, bot: !!a[6] }));
+    this.roster = (m.ro || []).map(a => ({ slot: a[0], id: a[1], name: a[2], style: { c: a[3], h: a[4], p: a[5] }, eff: { c: a[3], h: a[4], p: a[5] }, bot: !!a[6], ready: !!a[7] }));
     (m.sc || []).forEach((a, i) => { this.scores[i] = { pts: a[0], fl: a[1], kills: a[2], npc: a[3], wins: a[4], rp: a[5] }; });
     this.roundRes = m.res ? { res: m.res[0], why: m.res[1], team: m.res[2] } : null;
     this.rematchClosed = !!m.rc;
@@ -547,8 +555,9 @@ const VS = {
     if (this.msgT > 0) this.msgT -= dt;
     if (shakeT > 0) { shakeT -= dt; if (shakeT <= 0) shakeMag = 0; }
     // searching: the lobby is a playable warm-up field
-    if (this.sub === 'searching' || (this.botWhileWaiting && false)) {
-      this.searchT += dt;
+    const quickLobby = this.kind === 'quick' && (this.sub === 'wait' || this.sub === 'connecting') && this.warm && !this.botWhileWaiting;
+    if (this.sub === 'searching' || quickLobby) {
+      if (this.sub === 'searching') this.searchT += dt;
       const W = this.warm; W.activate();
       W.aim = c.aim;
       W.step(dt, s => s === this.warmMe ? c : NO_CONTROLS);
@@ -556,13 +565,20 @@ const VS = {
       if (W.enemies.length === 0 && Math.random() < dt * 0.05) { const b = new Bee(Math.random() < 0.5 ? -10 : REF_W + 10, 60 + Math.random() * 100, null); b.vx = b.x < 0 ? 60 : -60; W.enemies.push(b); }
       for (const e of W.enemies) if (e.type === 'bee' && (e.x < -30 || e.x > REF_W + 30)) e.alive = false;
       W.enemies = W.enemies.filter(e => e.alive);
-      return;
+      if (!quickLobby) return;
+      if (this.sub === 'wait' && (Input.pressed.Enter || gp.pressed(3))) this.toggleReady();
     }
     if (this.sub === 'connecting' || this.sub === 'closed') return;
     if (this.sub === 'wait' && this.isHost) {
       // lobby auto-start rules
       const h = this.humans().length;
-      if (this.kind !== 'bots') {
+      if (this.kind === 'quick') {
+        // everyone pressed START -> go now; otherwise start 30 s after a second player arrives
+        const allReady = this.humans().every(r => r.slot === this.mySlot ? this.ready : r.ready);
+        if (allReady && this.ready) { if (this.autoT < 0 || this.autoT > 1.2) { this.autoT = 1.2; this.allReady = true; SFX.play('go'); } }
+        else { this.allReady = false; if (h >= 2 && this.autoT < 0) this.autoT = 30; else if (h < 2) this.autoT = -1; }
+        if (this.autoT >= 0) { this.autoT -= dt; if (this.autoT <= 0) { this.autoT = -1; this.startMatch(); } }
+      } else if (this.kind !== 'bots') {
         if (h >= 4 && this.autoT < 0) this.autoT = 3;
         else if (h >= 2 && this.autoT < 0) this.autoT = this.kind === 'quick' ? 12 : 45;
         else if (h < 2 && this.kind !== 'bots') this.autoT = -1;
@@ -611,6 +627,7 @@ const VS = {
   /* ---------------- rendering ---------------- */
   draw() {
     if (this.sub === 'searching') { this.warm.draw(); this.drawSearching(); return; }
+    if (this.kind === 'quick' && (this.sub === 'wait' || this.sub === 'connecting') && this.warm && !this.botWhileWaiting) { this.warm.draw(); this.drawQuickLobby(); return; }
     if (this.sub === 'connecting' || (this.sub === 'closed' && !this.W)) { drawMenuBackdrop(); this.drawConnecting(); return; }
     if (this.sub === 'wait') { drawMenuBackdrop(); this.drawLobby(); return; }
     if (!this.W) { drawMenuBackdrop(); this.drawConnecting(); return; }
@@ -703,6 +720,59 @@ const VS = {
     if (this.isHost && !this.rematchClosed) b.push({ label: 'REMATCH', x: BW / 2 - 90, y, w: 150, h: 24, action: () => this.rematch() });
     b.push({ label: 'MAIN MENU', x: this.isHost && !this.rematchClosed ? BW / 2 + 90 : BW / 2, y, w: 150, h: 24, action: () => this.leave() });
     return b;
+  },
+  toggleReady() {
+    this.ready = !this.ready;
+    SFX.play(this.ready ? 'confirm' : 'back');
+    this.publishTick(1);
+  },
+  overlayButtons() {
+    if (this.sub === 'searching') return this.searchButtons();
+    if (this.kind !== 'quick' || this.botWhileWaiting) return [];
+    if (this.sub === 'connecting') return [{ label: 'LEAVE', x: BW - 52, y: 18, w: 84, h: 20, action: () => this.leave() }];
+    if (this.sub === 'wait') {
+      const alone = this.roster.filter(r => !r.bot).length < 2;
+      return [
+        { label: this.ready ? 'READY! (UNDO)' : alone ? 'START WITH BOTS' : 'START', x: BW - 78, y: 18, w: 136, h: 22, pill: !this.ready, action: () => this.toggleReady() },
+        { label: 'LEAVE', x: BW - 78, y: 46, w: 136, h: 18, action: () => this.leave() },
+      ];
+    }
+    return [];
+  },
+  drawQuickLobby() {
+    const pw = Math.min(330, BW - 170), px = 6;
+    const ro = this.roster.slice().sort((a, b) => a.slot - b.slot);
+    const ph = this.sub === 'connecting' ? 38 : 50 + 4 * 11;
+    panel(px, 6, pw, ph, 0.82);
+    const dots = '.'.repeat(1 + Math.floor(T * 2) % 3);
+    if (this.sub === 'connecting') {
+      drawText('JOINING LOBBY' + dots, px + 8, 11, 1, '#ffd23f');
+      drawText(this.net ? this.net.report() : '', px + 8, 24, 1, '#9a90c0');
+    } else {
+      drawText('QUICK PLAY LOBBY', px + 8, 11, 1, '#ffd23f');
+      const free = 4 - ro.filter(r => !r.bot).length;
+      drawText(free > 0 ? 'STILL SEARCHING FOR MORE PLAYERS' + dots : 'LOBBY FULL!', px + 8, 22, 1, '#ffffff');
+      for (let s = 0; s < 4; s++) {
+        const r = ro.find(q => q.slot === s), y = 36 + s * 11;
+        if (r) {
+          const st = r.eff || r.style, rdy = r.slot === this.mySlot ? this.ready : r.ready;
+          pxCircle(ctx, px + 12, y + 3, 3, SPIDER_COLORS[st.c % 6].ui);
+          drawText(r.name + (r.slot === this.mySlot ? ' (YOU)' : ''), px + 20, y, 1, SPIDER_COLORS[st.c % 6].ui);
+          drawText(rdy ? 'READY' : '...', px + pw - 8, y, 1, rdy ? '#7df06a' : '#9a90c0', 'right');
+        } else drawText('- OPEN SLOT -', px + 20, y, 1, '#5a5080');
+      }
+      let line = 'PRESS START WHEN YOU ARE READY';
+      if (this.allReady || (this.autoT >= 0 && this.autoT <= 1.3 && ro.filter(r => !r.bot).every(r => r.slot === this.mySlot ? this.ready : r.ready))) line = 'EVERYONE IS READY - GO!';
+      else if (this.autoT >= 0) line = 'STARTING IN ' + Math.ceil(this.autoT) + 'S - OR WHEN ALL PRESS START';
+      else if (ro.filter(r => !r.bot).length < 2) line = 'WAITING FOR PLAYERS - START TO PLAY BOTS';
+      drawText(line, px + 8, 36 + 4 * 11 + 2, 1, this.autoT >= 0 ? '#ffd23f' : '#bba8ff');
+      if (this.autoT >= 0 && this.autoT < 10) drawText(String(Math.ceil(this.autoT)), BW / 2, 60, 4, '#ffd23f', 'center', null, '#140c26');
+    }
+    const bs = this.overlayButtons();
+    for (const b of bs) drawButton(b, !!b.pill && Math.floor(T * 3) % 3 !== 2);
+    setHot(bs);
+    drawText(Input.last === 'gamepad' ? 'Y = START   WARM-UP FIELD - NOTHING COUNTS' : Input.last === 'touch' ? 'WARM-UP FIELD - NOTHING COUNTS' : 'ENTER = START   WARM-UP FIELD - NOTHING COUNTS', BW / 2, BH - 12, 1, 'rgba(255,255,255,0.75)', 'center', '#140c26');
+    if (this.msgT > 0) drawText(this.msg, BW / 2, BH / 2 - 40, 2, '#7df06a', 'center', null, '#140c26');
   },
   searchButtons() {
     const b = [{ label: 'CANCEL', x: BW - 52, y: 50, w: 84, h: 18, action: () => this.leave() }];

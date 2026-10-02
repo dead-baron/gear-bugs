@@ -303,16 +303,23 @@ class TrysteroAdapter extends NetAdapter {
   }
 }
 
-/* Quick Play: random matchmaking through a shared pool room, grouping up to 4 */
+/* Quick Play: shared pool room + open lobbies.
+   - Everyone searching sits in one pool room and broadcasts `seek` every
+     few seconds ({ t: waitStart, lob: code|0, n: players, done }).
+   - An open lobby seen in the pool is joined straight away (no handshake).
+   - With no lobby around, the lowest peer id among the visible seekers
+     opens one and keeps advertising it until it starts or fills up.
+   - Duplicate empty lobbies merge into the one with the lower host id.
+   - Self-healing: re-enter the pool after 20 s alone / 15 s with no lobby
+     forming, keeping the original wait-start time. */
 class QuickMatchAdapter extends TrysteroAdapter {
   constructor() {
     super();
     this.pool = null; this.poolTimer = null; this.seekers = new Map(); this.waitStart = Date.now();
     this.mode = 'idle';                  // idle | seek | joining | lobby | linked
-    this.cooldown = new Map(); this.pending = new Map(); this.accepted = new Set();
-    this.propCode = null; this.lobbyCode = null; this.lobbyOpen = false; this.gotProposal = false;
-    this.poolEnterT = 0; this.lastSeekT = 0; this.everSaw = false; this.poolAttempts = 0;
-    this.idleRefresh = false;            // the pool keeps a quick-play host fresh instead
+    this.lobbyCode = null; this.lobbyOpen = false; this.badLobbies = new Map();
+    this.poolEnterT = 0; this.lastSeekT = 0; this.poolAttempts = 0; this.joinT = 0;
+    this.idleRefresh = false;
   }
   async search() {
     if (this.closed) return;
@@ -320,122 +327,99 @@ class QuickMatchAdapter extends TrysteroAdapter {
     const lib = await loadTrystero();
     if (!lib) { this.emit('error', 'lib'); return; }
     this.selfId = lib.selfId;
+    if (this.pool) { this.broadcastSeek(); this.emit('status'); return; }
     try { await this.enterPool(); }
     catch (e) { console.warn('[net] pool entry failed', e); setTimeout(() => { if (!this.closed && this.mode === 'seek') this.search(); }, 3000); }
   }
   async enterPool() {
     await Promise.race([detectStrictNat(), sleep(600)]);
     const ice = await iceServers();
-    const rtc = strictNet === true ? { iceServers: ice.turn, iceTransportPolicy: 'relay' } : { iceServers: ice.all };  // pool never forces relay otherwise
+    const rtc = strictNet === true ? { iceServers: ice.turn, iceTransportPolicy: 'relay' } : { iceServers: ice.all };  // the pool never forces relay otherwise
     this.poolAttempts++;
     this.pool = trJoin(rtc, NET.POOL_ROOM);
-    const A = n => trAction(this.pool, n);
-    this.qSeek = A('seek'); this.qProp = A('prop'); this.qAcc = A('acc'); this.qRej = A('rej');
+    this.qSeek = trAction(this.pool, 'seek');
     this.qSeek.on((d, id) => this.onSeek(d, id));
-    this.qProp.on((d, id) => this.onProp(d, id));
-    this.qAcc.on((d, id) => this.onAcc(d, id));
-    this.qRej.on((d, id) => this.onRej(d, id));
     trRoomEvent(this.pool, 'onPeerJoin', id => { try { this.qSeek.send(this.seekMsg(), id); } catch (e) {} });
     trRoomEvent(this.pool, 'onPeerLeave', id => this.seekers.delete(id));
-    this.poolEnterT = nowMs(); this.lastSeekT = 0; this.everSaw = false; this.gotProposal = false;
+    this.poolEnterT = nowMs(); this.lastSeekT = 0;
     if (!this.poolTimer) this.poolTimer = setInterval(() => this.poolTick(), 500);
     this.broadcastSeek();
     this.emit('status');
   }
+  players() { return 1 + this.joinerCount(); }
   seekMsg() {
-    return { v: 1, t: this.waitStart, done: this.mode === 'joining' || this.mode === 'linked' || (this.mode === 'lobby' && !this.lobbyOpen) ? 1 : 0, lob: this.mode === 'lobby' && this.lobbyOpen ? this.lobbyCode : 0 };
+    const lobby = this.mode === 'lobby' && this.lobbyOpen && !this.matchStarted && this.players() < 4;
+    return { v: 1, t: this.waitStart, lob: lobby ? this.lobbyCode : 0, n: lobby ? this.players() : 0, done: this.mode === 'joining' || this.mode === 'linked' || (this.mode === 'lobby' && !lobby) ? 1 : 0 };
   }
   broadcastSeek() { if (this.pool && this.qSeek) { try { this.qSeek.send(this.seekMsg()); } catch (e) {} } this.lastSeekT = nowMs(); }
   leavePool() {
-    if (this.pool) { try { this.qSeek.send({ v: 1, t: this.waitStart, done: 1 }); } catch (e) {} const p = this.pool; setTimeout(() => { try { p.leave(); } catch (e) {} }, 100); }
-    this.pool = null; this.seekers.clear(); this.pending.clear();
+    if (this.pool) { try { this.qSeek.send({ v: 1, t: this.waitStart, done: 1 }); } catch (e) {} const p = this.pool; setTimeout(() => { try { p.leave(); } catch (e) {} }, 150); }
+    this.pool = null; this.seekers.clear();
   }
   onSeek(d, id) {
     if (!d || d.v !== 1) return;
     if (d.done) { this.seekers.delete(id); return; }
     const s = this.seekers.get(id) || { id, firstSeen: nowMs() };
-    s.t = d.t; s.lob = d.lob || 0; s.lastSeen = nowMs();
-    this.seekers.set(id, s); this.everSaw = true;
+    s.t = d.t; s.lob = d.lob || 0; s.n = d.n || 0; s.lastSeen = nowMs();
+    this.seekers.set(id, s);
   }
-  candidates() {
-    const now = nowMs();
-    return [...this.seekers.values()].filter(s => !s.lob && now - s.lastSeen < 12000 && !(this.cooldown.get(s.id) > now) && !this.pending.has(s.id) && !this.accepted.has(s.id));
-  }
-  propose(targets, code) {
-    for (const s of targets) { try { this.qProp.send({ v: 1, code }, s.id); } catch (e) {} this.pending.set(s.id, nowMs()); }
+  openLobbies(now) {
+    return [...this.seekers.values()].filter(s => s.lob && s.n < 4 && now - s.lastSeen < 9000 && !(this.badLobbies.get(s.lob) > now));
   }
   poolTick() {
     if (this.closed || !this.pool) return;
     const now = nowMs();
-    if (now - this.lastSeekT > 5000) this.broadcastSeek();
     for (const [id, s] of this.seekers) if (now - s.lastSeen > 15000) this.seekers.delete(id);
-    // proposal timeouts -> 4 s cooldown
-    for (const [id, t] of [...this.pending]) if (now - t > 5000) { this.pending.delete(id); this.cooldown.set(id, now + 4000); }
+    if (now - this.lastSeekT > (this.mode === 'lobby' ? 2000 : 3000)) this.broadcastSeek();
     if (this.mode === 'seek') {
-      const cands = this.candidates();
-      const lobbies = [...this.seekers.values()].some(s => s.lob);
-      if (!this.pending.size && !this.accepted.size && cands.length && !lobbies) {
-        const lower = cands.some(s => String(s.id) < String(this.selfId));
-        const waited = now - this.poolEnterT;
-        if (!lower || (waited > 8000 && !this.gotProposal)) {
-          // the lowest id proposes to up to 3 of the longest-waiting seekers
-          const pool = lower ? cands : cands.filter(s => String(s.id) > String(this.selfId));
-          const targets = pool.sort((a, b) => a.t - b.t).slice(0, 3);
-          if (targets.length) { this.propCode = randomCode(); this.propose(targets, this.propCode); }
-        }
-      }
-      if (this.accepted.size && !this.pending.size) { this.becomeHost(this.propCode); return; }
+      const lobbies = this.openLobbies(now).sort((a, b) => b.n - a.n || a.t - b.t);
+      if (lobbies.length) { this.joinLobby(lobbies[0].lob); return; }
+      const others = [...this.seekers.values()].filter(s => !s.lob && now - s.lastSeen < 9000);
+      if (others.length && now - this.poolEnterT > 1200 && others.every(s => String(this.selfId) < String(s.id))) { this.openLobby(); return; }
       // self-healing pool
-      const seen = this.seekers.size > 0;
-      if ((!seen && now - this.poolEnterT > 20000) || (seen && now - this.poolEnterT > 15000 && !this.pending.size && !this.accepted.size)) {
+      if ((!others.length && now - this.poolEnterT > 20000) || (others.length && now - this.poolEnterT > 15000)) {
         this.leavePool(); this.enterPool().catch(() => setTimeout(() => this.search(), 3000));
       }
-    } else if (this.mode === 'lobby' && this.lobbyOpen) {
-      const free = 3 - this.joinerCount() - this.pending.size;
-      if (free > 0) { const t = this.candidates().sort((a, b) => a.t - b.t).slice(0, free); if (t.length) this.propose(t, this.lobbyCode); }
+    } else if (this.mode === 'lobby') {
+      // two lobbies opened at once: an empty one folds into the lower host id's lobby
+      if (this.joinerCount() === 0 && !this.matchStarted) {
+        const other = this.openLobbies(now).filter(s => s.lob !== this.lobbyCode && String(s.id) < String(this.selfId)).sort((a, b) => b.n - a.n)[0];
+        if (other) { this.leaveRoom(); this.peers.clear(); this.joinLobby(other.lob); }
+      }
+    } else if (this.mode === 'joining') {
+      if (this.isLinked) { this.mode = 'linked'; this.leavePool(); return; }
+      if (now - this.joinT > 12000) { this.giveUp(this.code); }
     }
   }
-  onProp(d, id) {
-    if (!d || d.v !== 1 || !d.code) return;
-    const fromLobby = !!(this.seekers.get(id) || {}).lob;
-    if (this.mode !== 'seek') { try { this.qRej.send({ v: 1, code: d.code }, id); } catch (e) {} return; }
-    // simultaneous proposals: the lower id's proposal wins (forming lobbies always win)
-    if (this.pending.size && String(this.selfId) < String(id) && !fromLobby) { try { this.qRej.send({ v: 1, code: d.code }, id); } catch (e) {} return; }
-    this.gotProposal = true;
-    try { this.qAcc.send({ v: 1, code: d.code }, id); } catch (e) {}
-    for (const pid of this.pending.keys()) { try { this.qRej.send({ v: 1, cancel: 1, code: this.propCode }, pid); } catch (e) {} }
-    this.pending.clear(); this.accepted.clear();
-    this.mode = 'joining';
-    this.leavePool();
-    this.emit('matched', d.code, 'join');
-    this.connect(d.code, 'join');
-  }
-  onAcc(d, id) {
-    if (!d || d.v !== 1) return;
-    if (this.mode === 'seek' && this.pending.has(id) && d.code === this.propCode) { this.pending.delete(id); this.accepted.add(id); }
-    else if (this.mode === 'lobby' && d.code === this.lobbyCode) { this.pending.delete(id); }
-    else { try { this.qRej.send({ v: 1, cancel: 1, code: d.code }, id); } catch (e) {} }
-  }
-  onRej(d, id) {
-    if (!d) return;
-    if (d.cancel) {
-      // a proposer withdrew after we accepted - abandon that code and search again
-      if (this.mode === 'joining' && d.code === this.code && !this.isLinked) { this.leaveRoom(); this.peers.clear(); this.mode = 'seek'; this.search(); }
-      return;
-    }
-    this.pending.delete(id); this.cooldown.set(id, nowMs() + 4000);
-  }
-  becomeHost(code) {
-    this.mode = 'lobby'; this.lobbyCode = code; this.lobbyOpen = true; this.accepted.clear();
+  openLobby() {
+    this.attempt = 0;
+    this.mode = 'lobby'; this.lobbyCode = randomCode(); this.lobbyOpen = true; this.matchStarted = false;
+    this.emit('matched', this.lobbyCode, 'host');
+    this.connect(this.lobbyCode, 'host').then(() => this.broadcastSeek());
     this.broadcastSeek();
-    this.emit('matched', code, 'host');
-    this.connect(code, 'host');
   }
-  closeLobby() { if (this.mode === 'lobby') { this.lobbyOpen = false; this.leavePool(); clearInterval(this.poolTimer); this.poolTimer = null; } }
-  onOk(d, id) { super.onOk(d, id); if (this.isLinked) { this.mode = 'linked'; clearInterval(this.poolTimer); this.poolTimer = null; } }
+  joinLobby(code) {
+    this.attempt = 0;
+    this.mode = 'joining'; this.joinT = nowMs(); this.lobbyOpen = false;
+    this.broadcastSeek();
+    this.emit('matched', code, 'join');
+    this.connect(code, 'join');
+  }
+  giveUp(code) {
+    // couldn't get into that lobby: avoid it for a while and keep searching
+    this.badLobbies.set(code, nowMs() + 30000);
+    this.leaveRoom(); this.peers.clear(); this.isLinked = false;
+    this.mode = 'seek'; this.poolEnterT = nowMs();
+    this.emit('requeue');
+    if (!this.pool) this.search(); else this.broadcastSeek();
+  }
+  onFull() { if (this.role === 'join' && !this.isLinked && this.mode === 'joining') this.giveUp(this.code); }
+  onOk(d, id) { super.onOk(d, id); if (this.isLinked && this.mode === 'joining') { this.mode = 'linked'; this.leavePool(); } }
+  closeLobby() { if (this.mode === 'lobby') { this.lobbyOpen = false; this.broadcastSeek(); this.leavePool(); } }
   close() { this.leavePool(); clearInterval(this.poolTimer); this.poolTimer = null; super.close(); }
   report() {
     if (this.mode === 'seek') return 'SEARCHING  SEEN ' + this.seekers.size + '  POOL TRY ' + this.poolAttempts + (strictNet === true ? '  STRICT NAT' : '');
+    if (this.mode === 'lobby') return 'LOBBY ' + this.lobbyCode + '  PLAYERS ' + this.players() + '/4  ' + (this.lobbyOpen ? 'OPEN' : 'CLOSED') + '  SEEN ' + this.seekers.size;
     return super.report();
   }
 }

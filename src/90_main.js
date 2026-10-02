@@ -13,7 +13,7 @@ function setScene(name) {
 }
 function isGameplay() {
   if (scene === 'level') return true;
-  if (scene === 'vs') return VS.sub === 'searching' || (VS.sub === 'match' && VS.phase !== 'final' && !!VS.W);
+  if (scene === 'vs') return VS.sub === 'searching' || (VS.kind === 'quick' && !VS.botWhileWaiting && !!VS.warm && (VS.sub === 'wait' || VS.sub === 'connecting')) || (VS.sub === 'match' && VS.phase !== 'final' && !!VS.W);
   return false;
 }
 function rotateBlocked() { return isTouchDevice && window.innerHeight > window.innerWidth && !ignoreRotate; }
@@ -119,10 +119,10 @@ function update(dt) {
   if (scene === 'vs') {
     if (isGameplay()) {
       // overlay buttons (search screen) take taps before gameplay
-      if (VS.sub === 'searching') { for (const t of Input.taps) for (const b of VS.searchButtons()) if (inRect(t, btnRect(b))) { SFX.play('confirm'); b.action(); consumeInput(); return; } }
+      for (const t of Input.taps) for (const b of VS.overlayButtons()) if (inRect(t, btnRect(b))) { SFX.play('confirm'); b.action(); consumeInput(); return; }
       const c = readPlayerControls();
       if (c.pause && VS.sub === 'match') { pauseFrom = 'vs'; setScene('pause'); SFX.play('select'); VS.update(dt, NO_CONTROLS, nav); return; }
-      if (c.pause && VS.sub === 'searching') { VS.leave(); return; }
+      if (c.pause && VS.sub !== 'match') { VS.leave(); return; }
       VS.update(dt, c, nav);
       return;
     }
