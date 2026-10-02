@@ -185,7 +185,7 @@ class World {
   /* rare glowing red heart butterfly: random chance once `elapsed` passes 10 s */
   maybeSpawnHeart(dt, elapsed) {
     if (elapsed < 10 || this.flies.some(f => f.heart)) return;
-    if (Math.random() < dt / 22) this.spawnFly(undefined, 'heart');
+    if (Math.random() < dt / 50) this.spawnFly(undefined, 'heart');
   }
   drawAmbient() {
     for (const a of this.ambient) {

@@ -199,7 +199,7 @@ function drawWidow(x, y, angle, facing, phase, o = {}) {
 function drawBee(x, y, facing, o = {}) {
   ctx.save(); ctx.translate(Math.round(x), Math.round(y));
   if (o.falling) ctx.rotate(T * 14);
-  ctx.scale(facing * 2, 2);   // bees are drawn at 2x
+  ctx.scale(facing * 1.6, 1.6);   // bees are drawn at 1.6x
   const wing = Math.abs(Math.sin(T * 40)) * 3;
   ctx.fillStyle = 'rgba(230,245,255,0.75)';
   if (!o.falling) { ctx.fillRect(-2, -4 - wing, 3, 2 + wing); ctx.fillRect(1, -3 - wing * 0.8, 3, 2 + wing * 0.8); }
@@ -229,7 +229,7 @@ function drawHive(x, y, o = {}) {
 
 /* ---------- Glowing red heart butterfly ---------- */
 function drawButterfly(x, y, seed, fade = 1) {
-  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(1.4, 1.4);
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(1.1, 1.1);
   ctx.globalAlpha = (0.3 + 0.15 * Math.sin(T * 7 + seed)) * fade;
   pxCircle(ctx, 0, 0, 11, '#ff2d4a');
   ctx.globalAlpha = fade;

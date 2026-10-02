@@ -726,8 +726,8 @@ class Widow extends Enemy {
     else { const q = findCollision(x, y + 6, this.r + 8); if (q) { attachTo(this, q); this.state = 'stuck'; } }
     this.drawAngle = this.state === 'stuck' ? Math.atan2(this.ny, this.nx) + Math.PI / 2 : 0;
   }
-  webbable() { return this.spawnT <= 0; }
-  biteable() { return this.frozenT > 0 && this.spawnT <= 0; }
+  webbable() { return this.spawnT <= 0 && !this.descending; }
+  biteable() { return this.frozenT > 0 && this.spawnT <= 0 && !this.descending; }
   cancelAttacks() { this.windup = 0; this.dashT = 0; this.breathT = 0; }
   update(dt, W) {
     if (this.mirror) { this.glide(dt); return; }
@@ -736,8 +736,24 @@ class Widow extends Enemy {
       const before = Math.ceil(this.spawnT);
       this.spawnT -= dt;
       if (Math.ceil(this.spawnT) !== before && this.spawnT > 0) SFX.play('count');
-      if (this.spawnT <= 0) { this.spawnT = 0; SFX.play('shriek'); shake(0.25, 3); burst(W, this.x, this.y, 20, ['#14141c', '#e8102a', '#3a3a52'], 90, 0.6); this.attackCD = 1.5; this.webCD = 2.5; }
-      if (this.state === 'stuck') syncStuck(this);
+      if (this.spawnT <= 0) {
+        // arrived: drop from the rafters on a silk thread
+        this.spawnT = 0; SFX.play('shriek'); burst(W, this.x, this.y, 20, ['#14141c', '#e8102a', '#3a3a52'], 90, 0.6);
+        this.descending = true; this.threadY = this.plat ? this.plat.y + this.plat.h : this.y - 10; this.anchorPlat = this.plat;
+        this.state = 'air'; this.plat = null; this.y += this.r * 0.6; this.drawAngle = 0;
+      } else if (this.state === 'stuck') syncStuck(this);
+      return;
+    }
+    if (this.descending) {
+      this.y += 75 * dt;
+      this.drawAngle += angDiff(this.drawAngle, 0) * Math.min(1, dt * 8);
+      const q = findCollision(this.x, this.y, this.r, this.anchorPlat);
+      if (q || this.y > GROUND_Y) {
+        this.descending = false;
+        if (q) { attachTo(this, q); this.state = 'stuck'; }
+        SFX.play('land'); shake(0.25, 3); burst(W, this.x, this.y + this.r, 12, ['#7a5230', '#c9a07a'], 60, 0.4);
+        this.attackCD = 1.2; this.webCD = 2.5; this.recoverT = 0.5;
+      }
       return;
     }
     const D = W.D, frozen = this.tickFrozen(dt, W);
@@ -805,7 +821,13 @@ class Widow extends Enemy {
       drawText('BLACK WIDOW IN ' + n, this.x, this.y + (this.ny > 0.5 ? 18 : -34), 1, '#ff5a7a', 'center', null, '#140c26');
       if (this.spawnT > 1.5 || Math.floor(this.spawnT * 8) % 2 === 0) return;
     }
-    drawWidow(this.x, this.y, this.drawAngle, this.facing, this.walk, { frozen: this.frozenT > 0, shiver: this.frozenT > 0 && this.frozenT < 1.5, air: this.state === 'air', windup: this.windup > 0, hell: W.D.hell, mouthOpen: this.breathT > 0 });
+    if (this.descending) {
+      const ty = this.threadY !== undefined ? this.threadY : (W.L.enemySpawn && W.L.enemySpawn.plat ? W.L.enemySpawn.plat.y + W.L.enemySpawn.plat.h : this.y - 60);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(Math.round(this.x) + 0.5, ty); ctx.lineTo(Math.round(this.x) + 0.5, this.y - 6); ctx.stroke();
+      pxCircle(ctx, this.x, ty + 1, 2, '#ffffff');
+    }
+    drawWidow(this.x, this.y, this.drawAngle, this.facing, this.walk, { frozen: this.frozenT > 0, shiver: this.frozenT > 0 && this.frozenT < 1.5, air: this.state === 'air' || this.descending, windup: this.windup > 0, hell: W.D.hell, mouthOpen: this.breathT > 0 });
     this.drawFreezeBar(W);
   }
 }
@@ -848,7 +870,7 @@ class Hive extends Enemy {
 class Bee extends Enemy {
   constructor(x, y, hive) {
     super('bee', x, y);
-    this.r = 7; this.hitR = 14; this.hive = hive; this.state = 'patrol'; this.t = Math.random() * 10; this.phase = Math.random() * TAU;
+    this.r = 6; this.hitR = 12; this.hive = hive; this.state = 'patrol'; this.t = Math.random() * 10; this.phase = Math.random() * TAU;
     this.lastSeen = null; this.lostT = 0; this.stateT = 0; this.fireCD = 4 + Math.random() * 3; this.vy = 30;
   }
   biteable() { return false; }
@@ -888,11 +910,11 @@ class Bee extends Enemy {
     }
     this.vx += Math.sin(this.t * 11) * 30 * dt; this.vy += Math.cos(this.t * 13) * 30 * dt;
     this.x += this.vx * dt; this.y += this.vy * dt;
-    pushOut(this, 9);
+    pushOut(this, 7.5);
     this.x = clamp(this.x, 10, REF_W - 10); this.y = clamp(this.y, 10, Math.min(GROUND_Y - 10, WATER_Y - 12));
     if (Math.abs(this.vx) > 5) this.facing = this.vx > 0 ? 1 : -1;
     // sting on contact
-    if (this.state === 'chase' && t && dist(this.x, this.y, t.x, t.y) < t.r + 9) {
+    if (this.state === 'chase' && t && dist(this.x, this.y, t.x, t.y) < t.r + 7) {
       W.hurt(t, 'sting', this);
       const a = Math.atan2(this.y - t.y, this.x - t.x);
       this.vx = Math.cos(a) * 150; this.vy = Math.sin(a) * 150 - 40;

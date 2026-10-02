@@ -48,7 +48,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-02T04:04:22Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-02T04:19:29Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -832,13 +832,17 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 300), randInt(r, 215, 262), w, 8, 'fence'); }, 1);
     tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 40, 300), randInt(r, 70, 170), w, 10, 'plank'); }, 2);
     tryPlace(() => { const w = randInt(r, 36, 48); return mkPlat(xIn(w, 40, 300), randInt(r, 150, 240), w, randInt(r, 15, 18), 'rock'); }, 1);
-    // interior: lofts on the barn wall, crates and hay bales
+    // interior: keep a clear column from the rafters to the floor for the widow's silk drop
+    const beam = P.find(p => p.type === 'beam');
+    const dropX = randInt(r, 384, 520);
+    reserved.push({ x: dropX - 18, y: beam.y + beam.h, w: 36, h: gTop - beam.y - beam.h });
+    // hay bales stay inside the barn (red wall behind them), crates go out in the wheat
+    tryPlace(() => { const w = randInt(r, 40, 52), h = randInt(r, 24, 28); const c = mkPlat(xIn(w, 346, 618), gTop - h, w, h, 'hay'); c.touch = [ground]; return c; }, 1, 160);
     tryPlace(() => { const w = randInt(r, 80, 130); const c = mkPlat(624 - w, randInt(r, 130, 190), w, 10, 'loft'); c.touch = [P[2]]; return c; }, 1);
     tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 362, 560), randInt(r, 120, 220), w, 10, 'plank'); }, 1);
-    tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 360, 600), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
-    tryPlace(() => { const w = randInt(r, 40, 56), h = randInt(r, 24, 30); const c = mkPlat(xIn(w, 60, 600), gTop - h, w, h, 'hay'); c.touch = [ground]; return c; }, 2);
-    const beam = P.find(p => p.type === 'beam');
-    L.enemySpawn = { x: beam.x + beam.w / 2 + 20, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
+    tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 346, 618), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 1);
+    tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 60, 300), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
+    L.enemySpawn = { x: dropX, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
   }
   // Guarantee at least two high anchors for rope swinging
   let high = P.filter(p => !frame.includes(p) && p.y < 160).length;
@@ -1202,10 +1206,12 @@ function drawPlatform(g, p, L) {
       break;
     }
     case 'hay': {
-      roundRectPx(g, x, y, w, h, 4, '#b8862a');
-      roundRectPx(g, x, y, w, h - 2, 4, '#e0b04a');
+      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 2, y + h - 2, w, 3);     // ground shadow
+      roundRectPx(g, x, y, w, h, 4, '#4a2e0a');                              // dark outline so it reads against the straw
+      roundRectPx(g, x + 1, y + 1, w - 2, h - 2, 4, '#b8862a');
+      roundRectPx(g, x + 1, y + 1, w - 2, h - 4, 4, '#e0b04a');
       for (let i = 0; i < w * h / 6; i++) { g.fillStyle = r() < 0.5 ? '#f3cf6a' : '#c08e2e'; g.fillRect(x + 1 + Math.floor(r() * (w - 2)), y + 1 + Math.floor(r() * (h - 3)), 3, 1); }
-      g.fillStyle = '#8a5a1a'; g.fillRect(x + Math.floor(w * 0.3), y, 2, h); g.fillRect(x + Math.floor(w * 0.7), y, 2, h);
+      g.fillStyle = '#8a1f14'; g.fillRect(x + Math.floor(w * 0.3), y + 1, 2, h - 2); g.fillRect(x + Math.floor(w * 0.7), y + 1, 2, h - 2);   // red twine
       break;
     }
   }
@@ -1447,7 +1453,7 @@ function drawWidow(x, y, angle, facing, phase, o = {}) {
 function drawBee(x, y, facing, o = {}) {
   ctx.save(); ctx.translate(Math.round(x), Math.round(y));
   if (o.falling) ctx.rotate(T * 14);
-  ctx.scale(facing * 2, 2);   // bees are drawn at 2x
+  ctx.scale(facing * 1.6, 1.6);   // bees are drawn at 1.6x
   const wing = Math.abs(Math.sin(T * 40)) * 3;
   ctx.fillStyle = 'rgba(230,245,255,0.75)';
   if (!o.falling) { ctx.fillRect(-2, -4 - wing, 3, 2 + wing); ctx.fillRect(1, -3 - wing * 0.8, 3, 2 + wing * 0.8); }
@@ -1477,7 +1483,7 @@ function drawHive(x, y, o = {}) {
 
 /* ---------- Glowing red heart butterfly ---------- */
 function drawButterfly(x, y, seed, fade = 1) {
-  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(1.4, 1.4);
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.scale(1.1, 1.1);
   ctx.globalAlpha = (0.3 + 0.15 * Math.sin(T * 7 + seed)) * fade;
   pxCircle(ctx, 0, 0, 11, '#ff2d4a');
   ctx.globalAlpha = fade;
@@ -2276,8 +2282,8 @@ class Widow extends Enemy {
     else { const q = findCollision(x, y + 6, this.r + 8); if (q) { attachTo(this, q); this.state = 'stuck'; } }
     this.drawAngle = this.state === 'stuck' ? Math.atan2(this.ny, this.nx) + Math.PI / 2 : 0;
   }
-  webbable() { return this.spawnT <= 0; }
-  biteable() { return this.frozenT > 0 && this.spawnT <= 0; }
+  webbable() { return this.spawnT <= 0 && !this.descending; }
+  biteable() { return this.frozenT > 0 && this.spawnT <= 0 && !this.descending; }
   cancelAttacks() { this.windup = 0; this.dashT = 0; this.breathT = 0; }
   update(dt, W) {
     if (this.mirror) { this.glide(dt); return; }
@@ -2286,8 +2292,24 @@ class Widow extends Enemy {
       const before = Math.ceil(this.spawnT);
       this.spawnT -= dt;
       if (Math.ceil(this.spawnT) !== before && this.spawnT > 0) SFX.play('count');
-      if (this.spawnT <= 0) { this.spawnT = 0; SFX.play('shriek'); shake(0.25, 3); burst(W, this.x, this.y, 20, ['#14141c', '#e8102a', '#3a3a52'], 90, 0.6); this.attackCD = 1.5; this.webCD = 2.5; }
-      if (this.state === 'stuck') syncStuck(this);
+      if (this.spawnT <= 0) {
+        // arrived: drop from the rafters on a silk thread
+        this.spawnT = 0; SFX.play('shriek'); burst(W, this.x, this.y, 20, ['#14141c', '#e8102a', '#3a3a52'], 90, 0.6);
+        this.descending = true; this.threadY = this.plat ? this.plat.y + this.plat.h : this.y - 10; this.anchorPlat = this.plat;
+        this.state = 'air'; this.plat = null; this.y += this.r * 0.6; this.drawAngle = 0;
+      } else if (this.state === 'stuck') syncStuck(this);
+      return;
+    }
+    if (this.descending) {
+      this.y += 75 * dt;
+      this.drawAngle += angDiff(this.drawAngle, 0) * Math.min(1, dt * 8);
+      const q = findCollision(this.x, this.y, this.r, this.anchorPlat);
+      if (q || this.y > GROUND_Y) {
+        this.descending = false;
+        if (q) { attachTo(this, q); this.state = 'stuck'; }
+        SFX.play('land'); shake(0.25, 3); burst(W, this.x, this.y + this.r, 12, ['#7a5230', '#c9a07a'], 60, 0.4);
+        this.attackCD = 1.2; this.webCD = 2.5; this.recoverT = 0.5;
+      }
       return;
     }
     const D = W.D, frozen = this.tickFrozen(dt, W);
@@ -2355,7 +2377,13 @@ class Widow extends Enemy {
       drawText('BLACK WIDOW IN ' + n, this.x, this.y + (this.ny > 0.5 ? 18 : -34), 1, '#ff5a7a', 'center', null, '#140c26');
       if (this.spawnT > 1.5 || Math.floor(this.spawnT * 8) % 2 === 0) return;
     }
-    drawWidow(this.x, this.y, this.drawAngle, this.facing, this.walk, { frozen: this.frozenT > 0, shiver: this.frozenT > 0 && this.frozenT < 1.5, air: this.state === 'air', windup: this.windup > 0, hell: W.D.hell, mouthOpen: this.breathT > 0 });
+    if (this.descending) {
+      const ty = this.threadY !== undefined ? this.threadY : (W.L.enemySpawn && W.L.enemySpawn.plat ? W.L.enemySpawn.plat.y + W.L.enemySpawn.plat.h : this.y - 60);
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(Math.round(this.x) + 0.5, ty); ctx.lineTo(Math.round(this.x) + 0.5, this.y - 6); ctx.stroke();
+      pxCircle(ctx, this.x, ty + 1, 2, '#ffffff');
+    }
+    drawWidow(this.x, this.y, this.drawAngle, this.facing, this.walk, { frozen: this.frozenT > 0, shiver: this.frozenT > 0 && this.frozenT < 1.5, air: this.state === 'air' || this.descending, windup: this.windup > 0, hell: W.D.hell, mouthOpen: this.breathT > 0 });
     this.drawFreezeBar(W);
   }
 }
@@ -2398,7 +2426,7 @@ class Hive extends Enemy {
 class Bee extends Enemy {
   constructor(x, y, hive) {
     super('bee', x, y);
-    this.r = 7; this.hitR = 14; this.hive = hive; this.state = 'patrol'; this.t = Math.random() * 10; this.phase = Math.random() * TAU;
+    this.r = 6; this.hitR = 12; this.hive = hive; this.state = 'patrol'; this.t = Math.random() * 10; this.phase = Math.random() * TAU;
     this.lastSeen = null; this.lostT = 0; this.stateT = 0; this.fireCD = 4 + Math.random() * 3; this.vy = 30;
   }
   biteable() { return false; }
@@ -2438,11 +2466,11 @@ class Bee extends Enemy {
     }
     this.vx += Math.sin(this.t * 11) * 30 * dt; this.vy += Math.cos(this.t * 13) * 30 * dt;
     this.x += this.vx * dt; this.y += this.vy * dt;
-    pushOut(this, 9);
+    pushOut(this, 7.5);
     this.x = clamp(this.x, 10, REF_W - 10); this.y = clamp(this.y, 10, Math.min(GROUND_Y - 10, WATER_Y - 12));
     if (Math.abs(this.vx) > 5) this.facing = this.vx > 0 ? 1 : -1;
     // sting on contact
-    if (this.state === 'chase' && t && dist(this.x, this.y, t.x, t.y) < t.r + 9) {
+    if (this.state === 'chase' && t && dist(this.x, this.y, t.x, t.y) < t.r + 7) {
       W.hurt(t, 'sting', this);
       const a = Math.atan2(this.y - t.y, this.x - t.x);
       this.vx = Math.cos(a) * 150; this.vy = Math.sin(a) * 150 - 40;
@@ -2738,7 +2766,7 @@ class World {
   /* rare glowing red heart butterfly: random chance once `elapsed` passes 10 s */
   maybeSpawnHeart(dt, elapsed) {
     if (elapsed < 10 || this.flies.some(f => f.heart)) return;
-    if (Math.random() < dt / 22) this.spawnFly(undefined, 'heart');
+    if (Math.random() < dt / 50) this.spawnFly(undefined, 'heart');
   }
   drawAmbient() {
     for (const a of this.ambient) {
@@ -4055,7 +4083,7 @@ const VS = {
     if (this.W && this.phase !== 'wait') {
       w.fl = this.W.flies.filter(f => f.state === 'free').map(f => [f.id, nX(f.x), nY(f.y), f.heart ? 1 : 0]);
       w.en = this.W.enemies.filter(e => e.alive).map(e => [e.id, ENEMY_CODES[e.type], nX(e.x), nY(e.y), Math.round((e.drawAngle || 0) * 100), e.facing || 1,
-        Math.round(e.frozenT * 10), (e.windup > 0 ? 1 : 0) | (e.tongueT >= 0 || e.windup > 0 || e.breathT > 0 ? 2 : 0) | (e.state === 'air' ? 4 : 0) | (e.invisible ? 8 : 0) | (e.breathT > 0 ? 16 : 0) | (e.state === 'fall' ? 32 : 0),
+        Math.round(e.frozenT * 10), (e.windup > 0 ? 1 : 0) | (e.tongueT >= 0 || e.windup > 0 || e.breathT > 0 ? 2 : 0) | (e.state === 'air' ? 4 : 0) | (e.invisible ? 8 : 0) | (e.breathT > 0 ? 16 : 0) | (e.state === 'fall' ? 32 : 0) | (e.descending ? 64 : 0),
         Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100), Math.round((e.spawnT || 0) * 10)]);
       w.b = [];
       for (const { body } of this.bots.values()) { const bp = this.presenceOf(body); bp.id = body.id; w.b.push(bp); }
@@ -4163,7 +4191,7 @@ const VS = {
       }
       e.tx = dX(a[2]); e.ty = dY(a[3]); e.drawAngle = a[4] / 100; e.facing = a[5]; e.frozenT = a[6] / 10;
       const fl = a[7];
-      e.windup = fl & 1 ? 0.1 : 0; e.breathT = fl & 16 ? 0.1 : 0; e.state = fl & 32 ? 'fall' : fl & 4 ? 'air' : 'stuck'; e.invisible = !!(fl & 8);
+      e.windup = fl & 1 ? 0.1 : 0; e.breathT = fl & 16 ? 0.1 : 0; e.state = fl & 32 ? 'fall' : fl & 4 ? 'air' : 'stuck'; e.invisible = !!(fl & 8); e.descending = !!(fl & 64);
       e.tongueAng = a[8] / 100; e.netExt = a[9]; e.headRel = a[10] / 100; e.spawnT = (a[11] || 0) / 10; e.alive = true;
     }
     W.enemies = W.enemies.filter(e => eseen.has(e.netId));

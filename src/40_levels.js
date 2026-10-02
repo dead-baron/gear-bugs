@@ -126,13 +126,17 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 300), randInt(r, 215, 262), w, 8, 'fence'); }, 1);
     tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 40, 300), randInt(r, 70, 170), w, 10, 'plank'); }, 2);
     tryPlace(() => { const w = randInt(r, 36, 48); return mkPlat(xIn(w, 40, 300), randInt(r, 150, 240), w, randInt(r, 15, 18), 'rock'); }, 1);
-    // interior: lofts on the barn wall, crates and hay bales
+    // interior: keep a clear column from the rafters to the floor for the widow's silk drop
+    const beam = P.find(p => p.type === 'beam');
+    const dropX = randInt(r, 384, 520);
+    reserved.push({ x: dropX - 18, y: beam.y + beam.h, w: 36, h: gTop - beam.y - beam.h });
+    // hay bales stay inside the barn (red wall behind them), crates go out in the wheat
+    tryPlace(() => { const w = randInt(r, 40, 52), h = randInt(r, 24, 28); const c = mkPlat(xIn(w, 346, 618), gTop - h, w, h, 'hay'); c.touch = [ground]; return c; }, 1, 160);
     tryPlace(() => { const w = randInt(r, 80, 130); const c = mkPlat(624 - w, randInt(r, 130, 190), w, 10, 'loft'); c.touch = [P[2]]; return c; }, 1);
     tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 362, 560), randInt(r, 120, 220), w, 10, 'plank'); }, 1);
-    tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 360, 600), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
-    tryPlace(() => { const w = randInt(r, 40, 56), h = randInt(r, 24, 30); const c = mkPlat(xIn(w, 60, 600), gTop - h, w, h, 'hay'); c.touch = [ground]; return c; }, 2);
-    const beam = P.find(p => p.type === 'beam');
-    L.enemySpawn = { x: beam.x + beam.w / 2 + 20, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
+    tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 346, 618), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 1);
+    tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 60, 300), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
+    L.enemySpawn = { x: dropX, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
   }
   // Guarantee at least two high anchors for rope swinging
   let high = P.filter(p => !frame.includes(p) && p.y < 160).length;
@@ -496,10 +500,12 @@ function drawPlatform(g, p, L) {
       break;
     }
     case 'hay': {
-      roundRectPx(g, x, y, w, h, 4, '#b8862a');
-      roundRectPx(g, x, y, w, h - 2, 4, '#e0b04a');
+      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 2, y + h - 2, w, 3);     // ground shadow
+      roundRectPx(g, x, y, w, h, 4, '#4a2e0a');                              // dark outline so it reads against the straw
+      roundRectPx(g, x + 1, y + 1, w - 2, h - 2, 4, '#b8862a');
+      roundRectPx(g, x + 1, y + 1, w - 2, h - 4, 4, '#e0b04a');
       for (let i = 0; i < w * h / 6; i++) { g.fillStyle = r() < 0.5 ? '#f3cf6a' : '#c08e2e'; g.fillRect(x + 1 + Math.floor(r() * (w - 2)), y + 1 + Math.floor(r() * (h - 3)), 3, 1); }
-      g.fillStyle = '#8a5a1a'; g.fillRect(x + Math.floor(w * 0.3), y, 2, h); g.fillRect(x + Math.floor(w * 0.7), y, 2, h);
+      g.fillStyle = '#8a1f14'; g.fillRect(x + Math.floor(w * 0.3), y + 1, 2, h - 2); g.fillRect(x + Math.floor(w * 0.7), y + 1, 2, h - 2);   // red twine
       break;
     }
   }
