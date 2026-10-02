@@ -53,7 +53,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-02T04:41:43Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-02T04:47:24Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -2307,7 +2307,7 @@ class Widow extends Enemy {
       return;
     }
     if (this.descending) {
-      this.y += 75 * dt;
+      this.y += 150 * dt;
       this.drawAngle += angDiff(this.drawAngle, 0) * Math.min(1, dt * 8);
       const q = findCollision(this.x, this.y, this.r, this.anchorPlat);
       if (q || this.y > GROUND_Y) {

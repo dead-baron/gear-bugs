@@ -745,7 +745,7 @@ class Widow extends Enemy {
       return;
     }
     if (this.descending) {
-      this.y += 75 * dt;
+      this.y += 150 * dt;
       this.drawAngle += angDiff(this.drawAngle, 0) * Math.min(1, dt * 8);
       const q = findCollision(this.x, this.y, this.r, this.anchorPlat);
       if (q || this.y > GROUND_Y) {
