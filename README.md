@@ -1,6 +1,6 @@
 # GEAR BUGS
 
-An 8-bit spider adventure in a single HTML file. Crawl on any surface (walls, ceilings, upside down), swing on elastic web ropes, catch golden flies, and take down four bosses. Or battle up to three friends online.
+An 8-bit spider adventure in a single HTML file. Crawl on any surface (walls, ceilings, upside down), swing on elastic web ropes, catch golden flies, and take down five bosses. Or battle up to three friends online.
 
 All the pixel art, the font and the sound effects are generated in code. You only need the one file to play.
 
@@ -22,14 +22,15 @@ Travel across a Super Mario World–style map. Locked areas stay hidden under fo
 | 2 | Flower Meadow | **Beehive**: up to 3 bees that hunt you only when they can see you. A web knocks any bee out of the sky |
 | 3 | Tropical Island | **Gecko**: fast, jumps a lot, climbs every surface and has a very long tongue. The sea on both sides is instant defeat |
 | 4 | Old Barn & Wheat Field | **Black Widow**: a boss that dashes or pounces when it sees you, spits webs that stun you (mash buttons to break free), and kills with one bite |
+| 5 | Gear Factory | **Daddy Long Legs** (boss): a robot spider on long telescoping legs that grab floors, walls, ceilings and platforms. It stalks slowly, then chases and stabs with a leg when you get close. Web a leg to lock it, bite it to tear it off. With every leg gone, the body rolls, bounces and jumps at you until you web it and bite it |
 
 Now and then a rare **glowing red butterfly** flutters in after the first 10 seconds. Grab it or web it to win back a heart.
 
-In every level, catch **5 golden flies** to power up (web a fly to reel it in). Then web the enemy to trap it and crawl over to bite it. It drops a **Star Coin**, which you keep for good in your inventory. Beat the Black Widow to reach the ending screen.
+In every level, catch **5 golden flies** to power up (web a fly to reel it in). Then web the enemy to trap it and crawl over to bite it. It drops a **Star Coin**, which you keep for good in your inventory. The factory has moving lifts and conveyor belts that carry you along. Beat the Daddy Long Legs to reach the ending screen.
 
 The difficulties are **Easy, Medium, Hard and HELL MODE**. In HELL MODE enemies react almost instantly, have glowing red eyes and sometimes breathe fire. The fire slowly spreads along wooden platforms.
 
-**Practice** lets you play any of the four levels on any difficulty, with an optional infinite-hearts mode. Nothing is saved.
+**Practice** lets you play any of the five levels on any difficulty, with an optional infinite-hearts mode. Nothing is saved.
 
 ## VS mode (up to 4 players)
 

@@ -17,11 +17,13 @@ const Campaign = {
     if (level === 0) W.enemies.push(new Lizard(es.x, es.y));
     else if (level === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y));
     else if (level === 2) W.enemies.push(new Gecko(es.x, es.y));
-    else W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
+    else if (level === 3) W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
+    else W.enemies.push(new LongLegs(es.x, es.y, W.D));
     this.boss = W.enemies[0];
     for (let i = 0; i < 2; i++) W.spawnFly();
     const B = BIOMES[level];
-    this.banner = { text: 'LEVEL ' + (level + 1) + ': ' + B.name, sub: 'CATCH 5 GOLDEN FLIES, THEN TAKE DOWN THE ' + B.npc, t: 3, max: 3, color: '#ffd23f' };
+    this.banner = B.boss ? { text: 'BOSS: ' + B.npc, sub: 'GET 5 FLIES, THEN WEB ITS LEGS AND BITE THEM OFF', t: 3.4, max: 3.4, color: '#ff8c42' }
+                         : { text: 'LEVEL ' + (level + 1) + ': ' + B.name, sub: 'CATCH 5 GOLDEN FLIES, THEN TAKE DOWN THE ' + B.npc, t: 3, max: 3, color: '#ffd23f' };
     track('game_start', { mode: 'campaign', level: level + 1, difficulty: DIFFS[diff].name });
   },
   rules() {
@@ -40,7 +42,14 @@ const Campaign = {
         }
       },
       onEnemyBite(e, sp) { if (sp.powered && e.alive) e.defeat(C.W, sp.slot); },
-      onEnemyTrapped(e) { C.banner = { text: e.type === 'hive' ? 'HIVE WEBBED!' : BIOMES[C.level].npc + ' STUCK!', sub: 'CRAWL OVER AND BITE IT!', t: 1.8, max: 1.8, color: '#ffffff' }; },
+      onEnemyTrapped(e) {
+        if (e.type === 'dll') { C.banner = e.phase === 'legs' ? { text: 'LEG WEBBED!', sub: 'BITE IT TO TEAR IT OFF!', t: 1.6, max: 1.6, color: '#ffffff' } : { text: 'BODY WEBBED!', sub: 'BITE IT!', t: 1.6, max: 1.6, color: '#ffffff' }; return; }
+        C.banner = { text: e.type === 'hive' ? 'HIVE WEBBED!' : BIOMES[C.level].npc + ' STUCK!', sub: 'CRAWL OVER AND BITE IT!', t: 1.8, max: 1.8, color: '#ffffff' };
+      },
+      onBossPhase(e, what) {
+        if (what === 'ball') C.banner = { text: 'ALL LEGS GONE!', sub: 'THE BODY IS ROLLING - WEB IT, THEN BITE IT!', t: 2.6, max: 2.6, color: '#ff8c42' };
+        else C.banner = { text: 'LEG TORN OFF!', sub: e.legs.length + (e.legs.length === 1 ? ' LEG TO GO' : ' LEGS TO GO'), t: 1.6, max: 1.6, color: '#ffd23f' };
+      },
       onEnemyDefeated(e) {
         if (e !== C.boss) return;
         C.W.starCoin = { x: e.x, y: e.y - 6, vy: -140, landed: false, t: 0 };
@@ -70,7 +79,7 @@ const Campaign = {
     save.stars++;
     save.cleared[this.diff][this.level] = 1;
     const was = save.unlocked[this.diff];
-    save.unlocked[this.diff] = Math.max(was, Math.min(4, this.level + 2));
+    save.unlocked[this.diff] = Math.max(was, Math.min(NUM_LEVELS, this.level + 2));
     this.newUnlock = save.unlocked[this.diff] > was ? save.unlocked[this.diff] - 1 : -1;
     persist();
     SFX.play('complete');
@@ -105,7 +114,7 @@ const Campaign = {
       this.timer -= dt;
       if (this.timer <= 0 && this.practice) { setScene('practice'); return; }
       if (this.timer <= 0) {
-        if (this.level === 3) { setScene('ending'); SFX.play('complete'); }
+        if (this.level === NUM_LEVELS - 1) { setScene('ending'); SFX.play('complete'); }
         else { Overworld.enter(this.level, this.newUnlock); setScene('overworld'); }
       }
     }
@@ -116,6 +125,16 @@ const Campaign = {
     if (this.phase === 'won') return ['LEVEL CLEAR!', '#7df06a'];
     if (this.W.starCoin) return ['GRAB THE STAR COIN!', '#ffd23f'];
     if (me.stunT > 0) return ['WEBBED! MASH BUTTONS TO BREAK FREE!', Math.floor(T * 6) % 2 ? '#ffffff' : '#ff5a7a'];
+    if (boss.type === 'dll') {
+      const blink = Math.floor(T * 5) % 2 ? '#ffffff' : '#ffd23f';
+      if (boss.phase === 'legs') {
+        if (boss.legs.some(l => l.webT > 0)) return ['LEG WEBBED! BITE IT OFF!', blink];
+        if (me.powered) return ['WEB A LEG, THEN BITE IT OFF  (' + boss.legs.length + ' LEFT)', Math.floor(T * 3) % 2 ? '#ffd23f' : '#ffffff'];
+        return ['CATCH 5 GOLDEN FLIES - KEEP AWAY FROM ITS LEGS', '#ffffff'];
+      }
+      if (boss.frozenT > 0) return ['BODY STUCK! BITE IT!', blink];
+      if (me.powered) return ['WEB THE ROLLING BODY!', Math.floor(T * 3) % 2 ? '#ffd23f' : '#ffffff'];
+    }
     if (boss.frozenT > 0) return [npc + ' STUCK! BITE IT!', Math.floor(T * 5) % 2 ? '#ffffff' : '#ffd23f'];
     if (me.powered) return ['READY TO FIGHT! WEB THE ' + npc, Math.floor(T * 3) % 2 ? '#ffd23f' : '#ffffff'];
     return ['CATCH 5 GOLDEN FLIES', '#ffffff'];
@@ -149,8 +168,21 @@ function drawCampaignHUD(C) {
   // star tally
   drawStarShape(ctx, BW - 62, 16, 6, '#ffd23f', 0);
   drawText('x' + save.stars, BW - 54, 13, 1, '#ffd23f', 'left', '#140c26');
+  if (C.boss && C.boss.type === 'dll' && C.boss.alive) drawBossBar(C.boss);
   drawPauseButton();
   drawBanner(C.banner);
+}
+
+/* Boss health: one pip per leg, then the body */
+function drawBossBar(b) {
+  const n = b.maxLegs, w = n * 9 + 26, x = Math.round(BW / 2 - w / 2), y = BH - 18;
+  panel(x - 4, y - 4, w + 8, 16, 0.75);
+  drawText('BOSS', x, y, 1, '#ff8c42', 'left');
+  for (let i = 0; i < n; i++) {
+    const on = i < b.legs.length, px = x + 28 + i * 9;
+    ctx.fillStyle = on ? (b.legs[i].webT > 0 ? '#ffffff' : '#9aa4b4') : '#3b2b63'; ctx.fillRect(px, y, 2, 7); ctx.fillRect(px + 2, y + 5, 3, 2);
+  }
+  if (b.phase === 'ball') { pxCircle(ctx, x + w - 6, y + 3, 4, b.frozenT > 0 ? '#ffffff' : '#ff4a2a'); }
 }
 
 /* =====================================================================
@@ -162,6 +194,7 @@ const Overworld = {
     { x: 226, y: 170, biome: 1 },
     { x: 400, y: 236, biome: 2 },
     { x: 548, y: 122, biome: 3 },
+    { x: 560, y: 272, biome: 4 },
   ],
   cur: 0, tok: { x: 92, y: 262 }, walk: null, unlockAnim: null, map: null, mapKey: '', fog: null, puffs: [],
   enter(fromLevel, newUnlock) {
@@ -229,7 +262,7 @@ const Overworld = {
     g.fillStyle = '#9ad8ff'; for (let i = 0; i < 120; i++) g.fillRect(Math.floor(r() * BW), Math.floor(r() * BH), 3, 1);
     g.save(); g.translate(OX, OY);
     // landmass
-    const land = [[60, 270, 70], [140, 240, 80], [230, 180, 85], [320, 210, 70], [400, 240, 70], [480, 170, 70], [560, 120, 70], [600, 200, 50], [300, 290, 60], [180, 300, 60]];
+    const land = [[60, 270, 70], [140, 240, 80], [230, 180, 85], [320, 210, 70], [400, 240, 70], [480, 170, 70], [560, 120, 70], [600, 200, 50], [300, 290, 60], [180, 300, 60], [560, 280, 60], [490, 290, 45]];
     land.forEach(([x, y, rr]) => pxCircle(g, x, y + 4, rr + 4, '#e8d29a'));
     land.forEach(([x, y, rr]) => pxCircle(g, x, y, rr, '#5fbf52'));
     // biome regions
@@ -244,6 +277,13 @@ const Overworld = {
     g.fillStyle = '#a3322a'; g.fillRect(560, 96, 30, 22); g.fillStyle = '#7a231c'; for (let i = 0; i < 12; i++) g.fillRect(560 + i, 96 - i, 30 - i * 2, 1);
     g.fillStyle = '#e8dcc8'; g.fillRect(571, 106, 8, 12);
     g.fillStyle = '#8f9aa6'; g.fillRect(594, 90, 8, 28); pxCircle(g, 598, 90, 4, '#b4bfca');
+    // factory: grey yard, saw-tooth roof, smokestack
+    pxCircle(g, 560, 272, 46, '#6a6e78'); pxCircle(g, 560, 272, 38, '#7a7e88');
+    g.fillStyle = '#3a3f4c'; g.fillRect(578, 238, 30, 26);
+    for (let i = 0; i < 3; i++) for (let k = 0; k < 8; k++) { g.fillStyle = '#4a5060'; g.fillRect(578 + i * 10 + k, 238 - k, 10 - k, 1); }
+    g.fillStyle = '#9ad0ff'; g.fillRect(582, 250, 4, 4); g.fillRect(592, 250, 4, 4); g.fillRect(602, 250, 4, 4);
+    g.fillStyle = '#5c6270'; g.fillRect(612, 218, 7, 46); g.fillStyle = '#c43a3a'; g.fillRect(612, 222, 7, 2);
+    pxCircle(g, 616, 210, 5, '#b4bcc8'); pxCircle(g, 621, 202, 4, '#c8ccd4');
     // paths
     for (let i = 0; i < this.nodes.length - 1; i++) {
       for (let k = 0; k <= 1.0001; k += 0.04) { const p = this.pathPoint(i, i + 1, k); g.fillStyle = '#5a3a1f'; g.fillRect(Math.round(p.x) - 2, Math.round(p.y) - 1, 4, 4); g.fillStyle = '#f3e3b0'; g.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 1, 2, 2); }

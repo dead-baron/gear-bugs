@@ -119,6 +119,8 @@ class SpiderBody {
       }
       if (this.sv) { this.facing = Math.sign(this.sv); this.walkPhase += Math.abs(this.sv) * dt * 0.45; this.gear += this.sv * dt * 0.08; }
     }
+    // conveyor belts carry whatever is standing on them (the whole loop turns)
+    if (this.plat && this.plat.belt) { const total = this.plat.belt * dt; crawlMove(this, total); }
     syncStuck(this);
     if (c.jump && !lock) this.jump(c, W);
   }
@@ -295,7 +297,7 @@ function aimVector(sp, shoot, c, W) {
     if (dot > bestDot && lineOfSight(sp.x, sp.y, x, y)) { bestDot = dot; best = { x: ex / d, y: ey / d }; }
   };
   for (const f of W.flies) if (f.state === 'free') consider(f.x, f.y);
-  for (const e of W.enemies) if (e.alive && e.type !== 'hive' && e.webbable()) consider(e.x, e.y);
+  for (const e of W.enemies) if (e.alive && e.type !== 'hive' && e.webbable()) { if (e.aimPoints) for (const q of e.aimPoints()) consider(q.x, q.y); else consider(e.x, e.y); }
   if (W.mode === 'vs') for (const o of W.allSpiders()) if (o !== sp && o.alive && o.team !== sp.team) consider(o.x, o.y);
   return best || { x: dx, y: dy };
 }
@@ -324,7 +326,7 @@ class WebShot {
       // enemies
       for (const e of W.enemies) {
         if (!e.alive || !e.webbable()) continue;
-        if (dist(this.x, this.y, e.x, e.y) < e.hitR) {
+        if (e.webHit ? e.webHit(this.x, this.y) : dist(this.x, this.y, e.x, e.y) < e.hitR) {
           if (!this.visual && W.authority) e.onWeb(W, S);
           else burst(W, this.x, this.y, 6, ['#ffffff'], 40, 0.3);
           this.dead = true; break;

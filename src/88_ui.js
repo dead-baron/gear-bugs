@@ -205,9 +205,9 @@ Screens.practice = {
   level: 0, diff: -1, infinite: false,
   buttons() {
     if (this.diff < 0) this.diff = save.diff;
-    const cw = Math.min(120, Math.floor((BW - 40) / 4) - 8), gap = 8, total = cw * 4 + gap * 3, x0 = Math.round(BW / 2 - total / 2) + cw / 2, cy = BH / 2 - 34;
+    const N = NUM_LEVELS, cw = Math.min(112, Math.floor((BW - 30) / N) - 6), gap = 6, total = cw * N + gap * (N - 1), x0 = Math.round(BW / 2 - total / 2) + cw / 2, cy = BH / 2 - 34;
     const b = [];
-    for (let i = 0; i < 4; i++) b.push({ label: '', card: i, x: x0 + i * (cw + gap), y: cy, w: cw, h: 96, action: () => { if (this.level === i) this.play(); else { this.level = i; SFX.play('select'); } } });
+    for (let i = 0; i < N; i++) b.push({ label: '', card: i, x: x0 + i * (cw + gap), y: cy, w: cw, h: 96, action: () => { if (this.level === i) this.play(); else { this.level = i; SFX.play('select'); } } });
     const y = BH / 2 + 46;
     b.push({ label: '<', x: BW / 2 - 92, y, w: 24, h: 20, action: () => { this.diff = (this.diff + 3) % 4; } });
     b.push({ label: '>', x: BW / 2 + 92, y, w: 24, h: 20, action: () => { this.diff = (this.diff + 1) % 4; } });
@@ -229,15 +229,17 @@ Screens.practice = {
       const bandH = Math.ceil((b.h - 30) / B.sky.length);
       B.sky.forEach((c, k) => { ctx.fillStyle = c; ctx.fillRect(x, y + k * bandH, b.w, bandH); });
       const gy = y + b.h - 30;
-      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
-      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
+      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
+      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
       const ex = x + b.w / 2, ey = gy - 8;
       if (b.card === 0) drawLizard(ex, ey + 2, 0, -1, T * 10, Math.sin(T * 2) * 0.2, {});
       else if (b.card === 1) { drawHive(ex, ey - 22, {}); drawBee(ex + 22, ey - 18 + Math.sin(T * 5) * 3, -1, {}); }
       else if (b.card === 2) drawGecko(ex, ey + 2, 0, -1, T * 14, 0, {});
-      else drawWidow(ex, ey, 0, -1, T * 10, {});
-      drawText((b.card + 1) + '. ' + B.name, ex, gy + 8, 1, '#ffffff', 'center', '#140c26');
-      drawText(B.npc, ex, gy + 18, 1, sel ? '#ffd23f' : '#bba8ff', 'center', '#140c26');
+      else if (b.card === 3) drawWidow(ex, ey, 0, -1, T * 10, {});
+      else drawLongLegsPreview(ex, gy, T);
+      const nm = (b.card + 1) + '. ' + B.name, npc = B.npc.length * 6 > b.w - 4 ? B.npc.replace('DADDY ', '') : B.npc;
+      drawText(nm.length * 6 > b.w - 4 ? (b.card + 1) + '. ' + B.name.split(' ').pop() : nm, ex, gy + 8, 1, '#ffffff', 'center', '#140c26');
+      drawText(npc, ex, gy + 18, 1, sel ? '#ffd23f' : '#bba8ff', 'center', '#140c26');
     });
     const D = DIFFS[this.diff < 0 ? save.diff : this.diff];
     drawText(D.name, BW / 2, BH / 2 + 41, 2, D.color, 'center', '#140c26');
@@ -258,7 +260,7 @@ Screens.options = {
       { label: 'CONTROLS', action: () => setScene('controls') },
       { label: Screens.options.confirmReset ? 'TAP AGAIN TO ERASE' : 'RESET PROGRESS', action: () => {
         if (!Screens.options.confirmReset) { Screens.options.confirmReset = true; return; }
-        save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]; persist(); Screens.options.confirmReset = false;
+        save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]]; persist(); Screens.options.confirmReset = false;
       } },
       { label: 'BACK', action: () => { Screens.options.confirmReset = false; setScene(optionsReturn); } },
     ];
@@ -434,7 +436,7 @@ Screens.ending = {
     const cx = BW / 2, y0 = BH / 2 + 46, d = Campaign.diff;
     const b = [];
     if (d < 3) b.push({ label: 'TRY ' + DIFFS[d + 1].name, x: cx, y: y0, w: 190, h: 22, action: () => { save.diff = d + 1; persist(); Overworld.enter(0); setScene('overworld'); } });
-    b.push({ label: 'WORLD MAP', x: cx, y: y0 + (d < 3 ? 28 : 0), w: 190, h: 22, action: () => { Overworld.enter(3); setScene('overworld'); } });
+    b.push({ label: 'WORLD MAP', x: cx, y: y0 + (d < 3 ? 28 : 0), w: 190, h: 22, action: () => { Overworld.enter(NUM_LEVELS - 1); setScene('overworld'); } });
     b.push({ label: 'MAIN MENU', x: cx, y: y0 + (d < 3 ? 56 : 28), w: 190, h: 22, action: () => setScene('menu') });
     return b;
   },
@@ -448,7 +450,7 @@ Screens.ending = {
     drawMenuBackdrop(); dim(0.55);
     for (const p of this.fx) { ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2); }
     ctx.globalAlpha = 1;
-    drawText('YOU BEAT THE BLACK WIDOW!', BW / 2, BH / 2 - 112, 2, '#ffffff', 'center', null, '#140c26');
+    drawText('YOU BEAT THE DADDY LONG LEGS!', BW / 2, BH / 2 - 112, 2, '#ffffff', 'center', null, '#140c26');
     const s = textWidth('NEW LEVELS COMING SOON!', 4) > BW - 20 ? 3 : 4;
     drawText('NEW LEVELS COMING SOON!', BW / 2, BH / 2 - 80, s, '#ffd23f', 'center', '#8a5a00', '#140c26');
     drawStarShape(ctx, BW / 2 - 40, BH / 2 - 20, 12, '#ffd23f', T);

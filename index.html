@@ -39,9 +39,10 @@
      10_audio     Web Audio synthesized arcade SFX
      20_input     keyboard / mouse / touch / gamepad, unified actions
      30_geometry  platforms, 360-degree perimeter crawling math, LOS
-     40_levels    4 biomes, seeded level generator, cached art layers
+     40_levels    5 biomes, seeded level generator, cached art layers
      50_sprites   procedural pixel sprites (spiders, enemies, items)
      60_entities  spider physics + ropes, webs, flies, enemies, fire
+     65_longlegs  level 5 boss: robot daddy long legs + rolling body
      70_world     World container shared by campaign and VS
      75_campaign  campaign rules, overworld map, fog of war
      80_net       Trystero/WebRTC networking per the multiplayer spec
@@ -53,7 +54,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-02T05:21:09Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-03T18:43:14Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -215,10 +216,11 @@ const DIFFS = [
 
 /* ---------- Persistent save data ---------- */
 const SAVE_KEY = 'gearbugs_v2';
+const NUM_LEVELS = 5;                 // Field, Meadow, Island, Barn, Factory
 const save = {
   stars: 0,                                    // star coin inventory tally (permanent)
   unlocked: [1, 1, 1, 1],                      // levels unlocked per difficulty
-  cleared: [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]],
+  cleared: [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
   style: { c: 0, h: 0, p: 0 },                 // spider customization
   diff: 1,
   settings: { sound: true, shake: true, aim: true, autoFull: true },
@@ -228,8 +230,9 @@ try {
   const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
   if (s && typeof s === 'object') {
     if (typeof s.stars === 'number') save.stars = s.stars;
-    if (Array.isArray(s.unlocked) && s.unlocked.length === 4) save.unlocked = s.unlocked.map(v => clamp(v | 0, 1, 4));
-    if (Array.isArray(s.cleared) && s.cleared.length === 4) save.cleared = s.cleared.map(r => Array.isArray(r) && r.length === 4 ? r.map(v => v ? 1 : 0) : [0,0,0,0]);
+    // saves from the 4-level version grow to 5 levels; beating the Barn there opens the Factory
+    if (Array.isArray(s.cleared) && s.cleared.length === 4) save.cleared = s.cleared.map(r => { const a = Array.isArray(r) ? r.slice(0, NUM_LEVELS).map(v => v ? 1 : 0) : []; while (a.length < NUM_LEVELS) a.push(0); return a; });
+    if (Array.isArray(s.unlocked) && s.unlocked.length === 4) save.unlocked = s.unlocked.map((v, d) => clamp(Math.max(v | 0, save.cleared[d][3] ? 5 : 0), 1, NUM_LEVELS));
     if (s.style) save.style = { c: s.style.c | 0, h: s.style.h | 0, p: s.style.p | 0 };
     if (typeof s.diff === 'number') save.diff = clamp(s.diff | 0, 0, 3);
     if (s.settings) Object.assign(save.settings, s.settings);
@@ -729,6 +732,9 @@ const BIOMES = [
   { key: 'barn',   name: 'OLD BARN',        enemy: 'widow',  npc: 'BLACK WIDOW',
     sky: ['#3d2a6b', '#5a3279', '#7d3b7f', '#a3477c', '#c95a6e', '#e8755d', '#f59a52', '#f8be5c'],
     far: ['#d9a640', '#e8bb52'], near: ['#c48a2e', '#d69d3a'], bush: ['#b8862a', '#d6a540'], sun: '#ff9a3c' },
+  { key: 'factory', name: 'GEAR FACTORY', enemy: 'dll', npc: 'DADDY LONG LEGS', boss: true,
+    sky: ['#1c1a28', '#221f30', '#282438', '#2e2940', '#332d46', '#38314a', '#3c344c', '#40374e'],
+    far: ['#2a2638', '#332e44'], near: ['#3a3f4c', '#5c6270'], bush: ['#ffd23f', '#1a1a1a'], sun: '#9ad0ff' },
 ];
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
@@ -777,13 +783,20 @@ function generateLevel(biomeIdx, seed) {
     ground = mkPlat(96, 296, 448, 200, 'sand'); P.push(ground);
     L.water = { y: 330 };
     spawnXs = [150, 490, 250, 390];
-  } else {
+  } else if (biomeIdx === 3) {
     ground = mkPlat(-400, GROUND_Y, 1440, 240, 'dirt'); P.push(ground);
     P.push(mkPlat(-30, -400, 46, 720, 'silo'));
     P.push(mkPlat(624, -400, 120, 720, 'barnwall'));
     P.push(mkPlat(330, 72, 294, 10, 'beam'));
     P.push(mkPlat(330, 82, 12, 170, 'barnwall', { inner: true }));
     L.barn = { x0: 330, x1: 624, y0: 72 };
+  } else {
+    // factory: steel floor, riveted walls and a girder ceiling the spiders can hang from
+    ground = mkPlat(-400, GROUND_Y, 1440, 240, 'floor'); P.push(ground);
+    P.push(mkPlat(-30, -400, 46, 720, 'fwall'));
+    P.push(mkPlat(624, -400, 120, 720, 'fwall'));
+    P.push(mkPlat(-400, -400, 1440, 416, 'ceiling'));
+    L.movers = [];
   }
   const frame = P.slice();
   const gTop = ground.y;
@@ -833,7 +846,7 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 50, 90); return mkPlat(xIn(w, 14, 626), randInt(r, 170, 250), w, 10, 'drift'); }, 2);
     tryPlace(() => { const w = randInt(r, 36, 60), h = randInt(r, 18, 30); const c = mkPlat(xIn(w, 120, 520), gTop - h, w, h, 'beachrock'); c.touch = [ground]; return c; }, 2);
     L.enemySpawn = { x: 470, y: gTop - 10 };
-  } else {
+  } else if (biomeIdx === 3) {
     // exterior (wheat field side): fence rails and floating planks
     tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 300), randInt(r, 215, 262), w, 8, 'fence'); }, 1);
     tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 40, 300), randInt(r, 70, 170), w, 10, 'plank'); }, 2);
@@ -849,20 +862,52 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 346, 618), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 1);
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 60, 300), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
     L.enemySpawn = { x: dropX, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
+  } else {
+    // moving lifts first: their whole travel path stays clear of everything else
+    const placeMover = (make) => {
+      for (let t = 0; t < 120; t++) {
+        const c = make(); if (!c) continue;
+        const m = c.move, sw = { x: Math.min(m.x0, m.x1), y: Math.min(m.y0, m.y1), w: Math.abs(m.x1 - m.x0) + c.w, h: Math.abs(m.y1 - m.y0) + c.h };
+        if (sw.x < 30 || sw.x + sw.w > 610 || sw.y < 44) continue;
+        if (!fits(sw, P, null, M, reserved)) continue;
+        reserved.push({ x: sw.x - 14, y: sw.y - 14, w: sw.w + 28, h: sw.h + 28 });
+        P.push(c); L.movers.push(c); return c;
+      }
+      return null;
+    };
+    placeMover(() => {   // overhead trolley lift gliding side to side
+      const w = randInt(r, 52, 64), x0 = randInt(r, 90, 300), y = randInt(r, 70, 120), span = randInt(r, 120, 170);
+      return mkPlat(x0, y, w, 10, 'lift', { dyn: true, move: { x0, y0: y, x1: x0 + span, y1: y, period: 5 + r() * 1.5, phase: r() }, axis: 'x' });
+    });
+    placeMover(() => {   // elevator going up and down
+      const w = randInt(r, 46, 56), x = pick(r, [randInt(r, 70, 170), randInt(r, 440, 540)]), y1 = randInt(r, 232, 262), y0 = y1 - randInt(r, 100, 130);
+      return mkPlat(x, y0, w, 10, 'lift', { dyn: true, move: { x0: x, y0, x1: x, y1, period: 4.2 + r() * 1.2, phase: r() }, axis: 'y' });
+    });
+    // conveyor belts: one running along the floor, one up in the air on a stand
+    const beltSpeed = () => (r() < 0.5 ? -1 : 1) * randInt(r, 42, 58);
+    tryPlace(() => { const w = randInt(r, 120, 160); const c = mkPlat(xIn(w, 130, 520), gTop - 12, w, 12, 'conveyor', { dyn: true, belt: beltSpeed() }); c.touch = [ground]; return c; }, 1, 160);
+    tryPlace(() => { const w = randInt(r, 96, 136); return mkPlat(xIn(w, 40, 600), randInt(r, 168, 222), w, 12, 'conveyor', { dyn: true, belt: beltSpeed(), stand: true }); }, 1, 160);
+    // steel girders and a metal crate
+    tryPlace(() => { const w = randInt(r, 70, 110); return mkPlat(xIn(w, 40, 600), randInt(r, 56, 140), w, 10, 'girder'); }, 2);
+    tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 150, 240), w, 10, 'girder'); }, 1);
+    tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 100, 560), gTop - s, s, s, 'mcrate'); c.touch = [ground]; return c; }, 1);
+    L.enemySpawn = { x: 470, y: 150 };
   }
   // Guarantee at least two high anchors for rope swinging
-  let high = P.filter(p => !frame.includes(p) && p.y < 160).length;
+  let high = P.filter(p => !frame.includes(p) && p.y < 160 && !p.move).length;
   for (let t = 0; t < 60 && high < 2; t++) {
     const w = randInt(r, 60, 100);
-    const type = biomeIdx === 0 ? 'ledge' : biomeIdx === 1 ? 'leaf' : biomeIdx === 2 ? 'drift' : 'plank';
+    const type = biomeIdx === 0 ? 'ledge' : biomeIdx === 1 ? 'leaf' : biomeIdx === 2 ? 'drift' : biomeIdx === 3 ? 'plank' : 'girder';
     const c = mkPlat(xIn(w, 100, 540), randInt(r, 60, 150), w, 10, type);
     if (fits(c, P, null, M, reserved)) { P.push(c); high++; }
   }
   // Spawn points (on the ground / plateau surface)
   L.spawns = spawnXs.map(x => ({ x, y: gTop - 9 }));
+  if (L.movers) for (const m of L.movers) { m.bx = m.x; m.by = m.y; }
   // Decorative extras
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
+  if (biomeIdx === 4) for (let i = 0; i < 5; i++) L.decor.push({ k: 'lamp', x: 60 + i * 130 + Math.floor(dr() * 30), len: 8 + Math.floor(dr() * 14) });
   if (biomeIdx === 2) for (let i = 0; i < 6; i++) L.decor.push({ k: 'shell', x: 110 + dr() * 420, c: pick(dr, ['#ffb3c1', '#fff3d6', '#ffd29a']) });
   return L;
 }
@@ -878,6 +923,8 @@ function buildLevelArt(L) {
   /* ---- Sky ---- */
   ART.sky = makeCanvas(BW, BH);
   let g = ART.sky.getContext('2d');
+  if (L.biome === 4) { drawFactoryBackdrop(g, L); ART.clouds = []; ART.cloudSprites = []; }
+  else {
   const horizon = OY + (L.biome === 2 ? 240 : 290), bandH = Math.ceil(horizon / B.sky.length);
   B.sky.forEach((c, i) => { g.fillStyle = c; g.fillRect(0, i * bandH, BW, bandH + 1); });
   g.fillStyle = B.sky[B.sky.length - 1]; g.fillRect(0, horizon, BW, BH);
@@ -919,13 +966,14 @@ function buildLevelArt(L) {
   ART.clouds = [];
   const n = Math.max(4, Math.round(BW / 130));
   for (let i = 0; i < n; i++) ART.clouds.push({ x: cr() * BW, y: 8 + cr() * (OY + 110), spr: i % 4, spd: 3 + cr() * 6 });
+  }
 
   /* ---- Scene: hills, structures, platforms ---- */
   ART.scene = makeCanvas(BW, BH);
   g = ART.scene.getContext('2d');
   g.save(); g.translate(OX, OY);
   const xL = -OX - 4, xR = BW - OX + 4;
-  if (L.biome !== 2) {
+  if (L.biome !== 2 && L.biome !== 4) {
     for (let x = Math.floor(xL / 2) * 2; x < xR; x += 2) {
       const y = Math.round(236 + 22 * Math.sin(x * 0.012 + L.biome) + 10 * Math.sin(x * 0.033 + 1));
       g.fillStyle = B.far[0]; g.fillRect(x, y, 2, 330 - y);
@@ -966,8 +1014,10 @@ function buildLevelArt(L) {
   }
   if (L.barn) drawBarnBackdrop(g, L);
   // platforms: big frame pieces first, then props
-  for (const p of L.plats) if (p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand') drawPlatform(g, p, L);
-  for (const p of L.plats) if (!(p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand')) drawPlatform(g, p, L);
+  if (L.biome === 4) drawFactoryFixtures(g, L);
+  const big = p => p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand' || p.type === 'floor';
+  for (const p of L.plats) if (big(p)) drawPlatform(g, p, L);
+  for (const p of L.plats) if (!big(p) && !p.dyn) drawPlatform(g, p, L);
   for (const d of L.decor) if (d.k === 'shell') { g.fillStyle = d.c; g.fillRect(Math.round(d.x), 298, 3, 2); g.fillRect(Math.round(d.x) + 1, 297, 1, 1); }
   g.restore();
 }
@@ -1211,6 +1261,51 @@ function drawPlatform(g, p, L) {
       g.fillStyle = '#d09a5a'; g.fillRect(x + 2, y + 2, w - 4, 1);
       break;
     }
+    case 'floor': {
+      const x0 = -OX - 4, x1 = BW - OX + 4, y0 = p.y, y1 = BH - OY + 4;
+      g.fillStyle = '#3a3f4c'; g.fillRect(x0, y0, x1 - x0, y1 - y0);
+      for (let yy = y0 + 10; yy < y1; yy += 6) for (let xx = x0 + ((yy / 6) % 2) * 4; xx < x1; xx += 8) { g.fillStyle = '#4a505e'; g.fillRect(xx, yy, 3, 1); g.fillRect(xx + 1, yy + 1, 1, 1); }
+      g.fillStyle = '#5c6270'; g.fillRect(x0, y0, x1 - x0, 6); g.fillStyle = '#8a92a2'; g.fillRect(x0, y0, x1 - x0, 1);
+      for (let xx = Math.floor(x0 / 12) * 12; xx < x1; xx += 12) { g.fillStyle = '#ffd23f'; g.fillRect(xx, y0 + 6, 6, 3); g.fillStyle = '#1a1a1a'; g.fillRect(xx + 6, y0 + 6, 6, 3); }
+      for (let xx = Math.floor(x0 / 24) * 24; xx < x1; xx += 24) { g.fillStyle = '#9aa2b0'; g.fillRect(xx + 3, y0 + 2, 1, 1); }
+      break;
+    }
+    case 'fwall': {
+      const yTop = -OY - 4, yBot = 320, left = x < 100, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4;
+      g.fillStyle = '#4a5060'; g.fillRect(xa, yTop, xb - xa, yBot - yTop);
+      for (let yy = Math.floor(yTop / 40) * 40; yy < yBot; yy += 40) { g.fillStyle = '#3a3f4c'; g.fillRect(xa, yy, xb - xa, 2); for (let xx = xa + 4; xx < xb; xx += 10) { g.fillStyle = '#7a8090'; g.fillRect(xx, yy + 5, 2, 2); } }
+      const edge = left ? x + w - 3 : x;
+      g.fillStyle = '#8a92a2'; g.fillRect(edge, yTop, 3, yBot - yTop); g.fillStyle = '#2a2d36'; g.fillRect(left ? edge - 1 : edge + 3, yTop, 1, yBot - yTop);
+      for (let yy = 60; yy < 300; yy += 90) { g.fillStyle = '#ffd23f'; for (let i = 0; i < 4; i++) g.fillRect(left ? edge - 10 + i * 2 : edge + 4 + i * 2, yy + i * 3, 2, 3); }
+      break;
+    }
+    case 'ceiling': {
+      const x0 = -OX - 4, x1 = BW - OX + 4, yb = y + h;
+      g.fillStyle = '#23252e'; g.fillRect(x0, -OY - 4, x1 - x0, yb + OY + 4);
+      g.fillStyle = '#3a3f4c'; g.fillRect(x0, yb - 6, x1 - x0, 6); g.fillStyle = '#5c6270'; g.fillRect(x0, yb - 2, x1 - x0, 2);
+      g.strokeStyle = '#3a3f4c'; g.lineWidth = 2; g.beginPath();
+      for (let xx = Math.floor(x0 / 20) * 20; xx < x1; xx += 20) { g.moveTo(xx, yb - 6); g.lineTo(xx + 10, yb - 16); g.lineTo(xx + 20, yb - 6); }
+      g.stroke();
+      break;
+    }
+    case 'girder': {
+      g.fillStyle = '#8a3418'; g.fillRect(x, y, w, h);
+      g.fillStyle = '#c8502a'; g.fillRect(x, y, w, h - 2);
+      g.fillStyle = '#e8743c'; g.fillRect(x, y, w, 2);
+      g.fillStyle = '#a8401f'; g.fillRect(x, y + 4, w, 1);
+      for (let xx = x + 6; xx < x + w - 4; xx += 12) { g.fillStyle = '#5a200e'; g.fillRect(xx, y + 5, 3, 2); }
+      g.fillStyle = '#f0a070'; g.fillRect(x + 1, y + 1, 1, 1); g.fillRect(x + w - 2, y + 1, 1, 1);
+      break;
+    }
+    case 'mcrate': {
+      g.fillStyle = '#2a2d36'; g.fillRect(x, y, w, h);
+      g.fillStyle = '#6a7480'; g.fillRect(x + 1, y + 1, w - 2, h - 2);
+      g.fillStyle = '#8a94a4'; g.fillRect(x + 1, y + 1, w - 2, 2);
+      g.strokeStyle = '#4a5260'; g.lineWidth = 2; g.beginPath(); g.moveTo(x + 3, y + 3); g.lineTo(x + w - 3, y + h - 3); g.moveTo(x + w - 3, y + 3); g.lineTo(x + 3, y + h - 3); g.stroke();
+      for (const [cx, cy] of [[x + 3, y + 3], [x + w - 4, y + 3], [x + 3, y + h - 4], [x + w - 4, y + h - 4]]) { g.fillStyle = '#b4bcc8'; g.fillRect(cx, cy, 1, 1); }
+      g.fillStyle = '#ffd23f'; g.fillRect(x + 3, y + h - 6, w - 6, 2);
+      break;
+    }
     case 'hay': {
       g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 2, y + h - 2, w, 3);     // ground shadow
       roundRectPx(g, x, y, w, h, 4, '#4a2e0a');                              // dark outline so it reads against the straw
@@ -1254,6 +1349,117 @@ function drawWheat(L, t, front) {
     ctx.fillStyle = front ? '#f0cf6a' : '#d6a540';
     for (let i = 0; i < 6; i++) { ctx.fillRect(hx - 1, hy - i * 2, 1, 2); ctx.fillRect(hx + 1, hy - i * 2 - 1, 1, 2); }
     ctx.fillRect(hx, hy - 13, 1, 3);
+  }
+}
+
+/* ---------- Factory (level 5) art ---------- */
+function drawFactoryBackdrop(g, L) {
+  g.fillStyle = '#1c1a28'; g.fillRect(0, 0, BW, BH);
+  g.save(); g.translate(OX, OY);
+  const x0 = -OX - 4, x1 = BW - OX + 4, y0 = -OY - 4, y1 = BH - OY + 4;
+  // dark brick back wall
+  for (let yy = Math.floor(y0 / 8) * 8, row = 0; yy < y1; yy += 8, row++) {
+    for (let xx = Math.floor(x0 / 16) * 16 - (row % 2) * 8; xx < x1; xx += 16) {
+      g.fillStyle = ((xx * 7 + yy * 3) & 31) < 6 ? '#2e2a3c' : '#28243a'; g.fillRect(xx, yy, 15, 7);
+    }
+  }
+  // tall factory windows with cool light
+  const wr = rng(L.seed ^ 31);
+  for (let i = 0; i < 4; i++) {
+    const wx = 40 + i * 156 + Math.floor(wr() * 20), wy = 34, ww = 64, wh = 104;
+    g.fillStyle = '#14121c'; g.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);
+    g.fillStyle = '#3b4f78'; g.fillRect(wx, wy, ww, wh);
+    g.fillStyle = '#4c6494'; g.fillRect(wx, wy, ww, wh / 2);
+    g.fillStyle = '#14121c'; for (let k = 1; k < 4; k++) g.fillRect(wx + k * 16, wy, 2, wh); for (let k = 1; k < 5; k++) g.fillRect(wx, wy + k * 21, ww, 2);
+    g.fillStyle = 'rgba(200,220,255,0.18)'; for (let k = 0; k < 6; k++) g.fillRect(wx + 4 + k * 9, wy + 4 + k * 12, 8, 2);
+    if (wr() < 0.6) { g.fillStyle = '#1c1a28'; g.fillRect(wx + 16 * Math.floor(wr() * 4) + 2, wy + 21 * Math.floor(wr() * 5) + 2, 14, 19); }
+    g.globalAlpha = 0.07; g.fillStyle = '#9ad0ff';
+    g.beginPath(); g.moveTo(wx, wy + wh); g.lineTo(wx + ww, wy + wh); g.lineTo(wx + ww + 60, 320); g.lineTo(wx + 30, 320); g.closePath(); g.fill();
+    g.globalAlpha = 1;
+  }
+  // pipes along the wall
+  for (const [py, c1, c2] of [[262, '#4a5a6a', '#7a8ea2'], [284, '#5a4a3a', '#9a7a5a']]) {
+    g.fillStyle = c1; g.fillRect(x0, py, x1 - x0, 7); g.fillStyle = c2; g.fillRect(x0, py + 1, x1 - x0, 2);
+    for (let xx = Math.floor(x0 / 70) * 70 + 20; xx < x1; xx += 70) { g.fillStyle = '#2a2d36'; g.fillRect(xx, py - 1, 4, 9); }
+  }
+  for (const px of [180, 470]) { g.fillStyle = '#4a5a6a'; g.fillRect(px, 140, 7, 122); g.fillStyle = '#7a8ea2'; g.fillRect(px + 1, 140, 2, 122); pxCircle(g, px + 3, 156, 6, '#5c6270'); pxCircle(g, px + 3, 156, 3, '#c43a3a'); }
+  g.restore();
+}
+/* Lamps hanging from the ceiling and the tracks the lifts ride on (cached with the scene) */
+function drawFactoryFixtures(g, L) {
+  for (const d of L.decor) if (d.k === 'lamp') {
+    g.fillStyle = '#1a1a22'; g.fillRect(d.x, 16, 1, d.len);
+    const ly = 16 + d.len;
+    g.fillStyle = '#5c6270'; g.fillRect(d.x - 5, ly, 11, 3); g.fillRect(d.x - 3, ly - 2, 7, 2);
+    g.fillStyle = '#fff3c0'; g.fillRect(d.x - 2, ly + 3, 5, 2);
+    g.globalAlpha = 0.06; g.fillStyle = '#ffe9a0';
+    g.beginPath(); g.moveTo(d.x - 4, ly + 4); g.lineTo(d.x + 5, ly + 4); g.lineTo(d.x + 40, 320); g.lineTo(d.x - 40, 320); g.closePath(); g.fill();
+    g.globalAlpha = 1;
+  }
+  for (const m of L.movers || []) {
+    const mv = m.move;
+    if (m.axis === 'x') {   // ceiling rail
+      g.fillStyle = '#2a2d36'; g.fillRect(mv.x0 + m.w / 2 - 6, 16, mv.x1 - mv.x0 + 12, 4);
+      g.fillStyle = '#7a8090'; g.fillRect(mv.x0 + m.w / 2 - 6, 17, mv.x1 - mv.x0 + 12, 1);
+    } else {                // elevator guide rails down to the floor
+      for (const gx of [m.x - 3, m.x + m.w + 1]) { g.fillStyle = '#2a2d36'; g.fillRect(gx, mv.y0 - 10, 2, GROUND_Y - mv.y0 + 10); g.fillStyle = '#5c6270'; g.fillRect(gx, mv.y0 - 10, 1, GROUND_Y - mv.y0 + 10); }
+    }
+  }
+  for (const p of L.plats) if (p.type === 'conveyor' && p.stand) {   // support stand for a raised belt
+    for (const sx of [p.x + 10, p.x + p.w - 14]) { g.fillStyle = '#2a2d36'; g.fillRect(sx, p.y + p.h, 4, GROUND_Y - p.y - p.h); g.fillStyle = '#5c6270'; g.fillRect(sx + 1, p.y + p.h, 1, GROUND_Y - p.y - p.h); }
+  }
+}
+/* Animated pieces: gears behind the scene, then lifts + conveyors drawn every frame */
+function drawFactoryGears(t) {
+  for (const [gx, gy, rr, sp] of [[110, 210, 34, 0.4], [168, 176, 18, -0.75], [560, 200, 40, -0.3]]) drawGearShape(ctx, gx, gy, rr, t * sp, '#24212f', '#2c2838');
+}
+function drawGearShape(g, cx, cy, rr, ang, c1, c2) {
+  const teeth = Math.max(8, Math.round(rr / 3.5));
+  g.fillStyle = c1; g.beginPath();
+  for (let i = 0; i < teeth * 2; i++) {
+    const a = ang + i * Math.PI / teeth, R = i % 2 ? rr : rr + 5;
+    const a2 = a + Math.PI / teeth;
+    g.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); g.lineTo(cx + Math.cos(a2 - 0.08) * R, cy + Math.sin(a2 - 0.08) * R);
+  }
+  g.closePath(); g.fill();
+  pxCircle(g, cx, cy, rr * 0.62, c2); pxCircle(g, cx, cy, rr * 0.22, c1);
+  g.fillStyle = c1; for (let k = 0; k < 4; k++) { const a = ang + k * Math.PI / 2; g.fillRect(Math.round(cx + Math.cos(a) * rr * 0.42) - 2, Math.round(cy + Math.sin(a) * rr * 0.42) - 2, 4, 4); }
+}
+function drawDynPlatform(p, t) {
+  const x = Math.round(p.x), y = Math.round(p.y), w = p.w, h = p.h;
+  if (p.type === 'lift') {
+    if (p.axis === 'x') { ctx.fillStyle = '#1a1a22'; ctx.fillRect(x + 6, 20, 1, y - 20); ctx.fillRect(x + w - 7, 20, 1, y - 20); ctx.fillStyle = '#5c6270'; ctx.fillRect(x + w / 2 - 8, 16, 16, 5); }
+    else { ctx.fillStyle = '#2a2d36'; ctx.fillRect(x + w / 2 - 3, y + h, 6, GROUND_Y - y - h); ctx.fillStyle = '#9aa2b0'; ctx.fillRect(x + w / 2 - 2, y + h, 2, GROUND_Y - y - h); }
+    ctx.fillStyle = '#2a2d36'; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#8a94a4'; ctx.fillRect(x + 1, y, w - 2, h - 2);
+    ctx.fillStyle = '#c4ccd8'; ctx.fillRect(x + 1, y, w - 2, 2);
+    for (let xx = x + 2; xx < x + w - 2; xx += 8) { ctx.fillStyle = '#ffd23f'; ctx.fillRect(xx, y + 4, 4, h - 6); ctx.fillStyle = '#1a1a1a'; ctx.fillRect(xx + 4, y + 4, 4, h - 6); }
+    ctx.fillStyle = Math.sin(t * 6) > 0 ? '#ff5a3a' : '#7a2a1a'; ctx.fillRect(x + 2, y + 1, 2, 1); ctx.fillRect(x + w - 4, y + 1, 2, 1);
+    return;
+  }
+  if (p.type === 'conveyor') {
+    const rr = h / 2, off = ((t * p.belt) % 8 + 8) % 8;
+    ctx.fillStyle = '#2a2d36'; ctx.fillRect(x - 1, y, w + 2, h);
+    ctx.fillStyle = '#16171c'; ctx.fillRect(x + 2, y, w - 4, 3); ctx.fillRect(x + 2, y + h - 3, w - 4, 3);
+    ctx.fillStyle = '#5c6270'; ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
+    for (let xx = x + 3 + off; xx < x + w - 3; xx += 8) { ctx.fillStyle = '#4a4e58'; ctx.fillRect(Math.round(xx), y, 3, 3); }
+    for (let xx = x + w - 3 - off; xx > x + 3; xx -= 8) { ctx.fillStyle = '#4a4e58'; ctx.fillRect(Math.round(xx) - 3, y + h - 3, 3, 3); }
+    // direction arrows along the side
+    const dir = Math.sign(p.belt);
+    for (let xx = x + 12; xx < x + w - 12; xx += 22) { ctx.fillStyle = '#ffd23f'; for (let k = 0; k < 3; k++) ctx.fillRect(xx + dir * k, y + 4 + k, 1, h - 8 - k * 2); }
+    for (const ex of [x + rr, x + w - rr]) {
+      pxCircle(ctx, ex, y + rr, rr, '#8a94a4'); pxCircle(ctx, ex, y + rr, rr - 2, '#3a3f4c');
+      const a = t * p.belt / rr; ctx.fillStyle = '#c4ccd8'; ctx.fillRect(Math.round(ex + Math.cos(a) * (rr - 3)), Math.round(y + rr + Math.sin(a) * (rr - 3)), 1, 1);
+    }
+  }
+}
+/* Move lifts to where they are at time t; carry ropes anchored to them */
+function updateMovers(L, t) {
+  if (!L.movers) return;
+  for (const p of L.movers) {
+    const m = p.move, k = 0.5 - 0.5 * Math.cos(TAU * (t / m.period + m.phase));
+    const nx = m.x0 + (m.x1 - m.x0) * k, ny = m.y0 + (m.y1 - m.y0) * k;
+    p.dx = nx - p.x; p.dy = ny - p.y; p.x = nx; p.y = ny;
   }
 }
 
@@ -1681,6 +1887,8 @@ class SpiderBody {
       }
       if (this.sv) { this.facing = Math.sign(this.sv); this.walkPhase += Math.abs(this.sv) * dt * 0.45; this.gear += this.sv * dt * 0.08; }
     }
+    // conveyor belts carry whatever is standing on them (the whole loop turns)
+    if (this.plat && this.plat.belt) { const total = this.plat.belt * dt; crawlMove(this, total); }
     syncStuck(this);
     if (c.jump && !lock) this.jump(c, W);
   }
@@ -1857,7 +2065,7 @@ function aimVector(sp, shoot, c, W) {
     if (dot > bestDot && lineOfSight(sp.x, sp.y, x, y)) { bestDot = dot; best = { x: ex / d, y: ey / d }; }
   };
   for (const f of W.flies) if (f.state === 'free') consider(f.x, f.y);
-  for (const e of W.enemies) if (e.alive && e.type !== 'hive' && e.webbable()) consider(e.x, e.y);
+  for (const e of W.enemies) if (e.alive && e.type !== 'hive' && e.webbable()) { if (e.aimPoints) for (const q of e.aimPoints()) consider(q.x, q.y); else consider(e.x, e.y); }
   if (W.mode === 'vs') for (const o of W.allSpiders()) if (o !== sp && o.alive && o.team !== sp.team) consider(o.x, o.y);
   return best || { x: dx, y: dy };
 }
@@ -1886,7 +2094,7 @@ class WebShot {
       // enemies
       for (const e of W.enemies) {
         if (!e.alive || !e.webbable()) continue;
-        if (dist(this.x, this.y, e.x, e.y) < e.hitR) {
+        if (e.webHit ? e.webHit(this.x, this.y) : dist(this.x, this.y, e.x, e.y) < e.hitR) {
           if (!this.visual && W.authority) e.onWeb(W, S);
           else burst(W, this.x, this.y, 6, ['#ffffff'], 40, 0.3);
           this.dead = true; break;
@@ -2584,6 +2792,424 @@ class RemoteSpider {
   }
 }
 
+/* ===== 65_longlegs.js ===== */
+/* =====================================================================
+   65_LONGLEGS - level 5 boss: a mechanical daddy long legs
+   ---------------------------------------------------------------------
+   Phase 1 (legs): the round body hovers on long telescoping legs that
+   plant on any surface (floor, walls, ceiling, platforms) and re-plant as
+   it travels, so it can cross the factory quickly. It stalks slowly and
+   only chases and stabs with a leg when a spider gets close.
+   To beat it: catch 5 flies, web a leg (it locks in place), then bite
+   the leg to tear it off. Repeat for every leg.
+   Phase 2 (ball): with no legs left the body drops and rolls, bounces
+   and jumps at you. Web it, then bite it like any other creature.
+   ===================================================================== */
+const LL = { REACH: 230, HIP: 7, STRIKE_RANGE: 150, AGGRO: 120, BALL_R: 11 };
+
+class LongLegs extends Enemy {
+  constructor(x, y, D) {
+    super('dll', x, y);
+    this.r = 11; this.hitR = 14; this.phase = 'legs';
+    this.vx = 0; this.vy = 0; this.mode = 'stalk'; this.bootT = 1.8;
+    this.relocT = 5; this.reloc = null; this.strikeCD = 2.5; this.fireCD = 4; this.eyeA = Math.PI;
+    this.rot = 0; this.jumpCD = 1.5; this.grounded = false; this.debris = []; this.hurtCD = 0;
+    const n = D.hell ? 8 : D.speed < 0.9 ? 4 : 6;
+    this.maxLegs = n; this.legs = [];
+    for (let i = 0; i < n; i++) {
+      const a = -Math.PI / 2 + (i + 0.5) / n * TAU;          // spread all the way round
+      const leg = { a, fx: x, fy: y + 40, plat: null, ox: 0, oy: 0, st: 'dangle', t: 0, dur: 0, sx: 0, sy: 0, tx: 0, ty: 0, tplat: null, webT: 0, retryT: 0, bx: x, by: y, hit: false };
+      this.legs.push(leg);
+      const spot = this.findSpot(leg.a);
+      if (spot) this.plant(leg, spot);
+    }
+  }
+  /* ---------- geometry helpers ---------- */
+  hip(leg) { return { x: this.x + Math.cos(leg.a) * LL.HIP, y: this.y + Math.sin(leg.a) * LL.HIP }; }
+  knee(leg) {
+    const h = this.hip(leg), dx = leg.fx - h.x, dy = leg.fy - h.y, d = Math.hypot(dx, dy) || 1;
+    let seg = Math.max(58, d * 0.56); if (d > seg * 2) seg = d / 2;
+    const lift = Math.sqrt(Math.max(0, seg * seg - d * d / 4));
+    let nx = -dy / d, ny = dx / d;
+    if (Math.abs(dx) < Math.abs(dy) * 0.5) { if (Math.sign(nx || 1) !== Math.sign(Math.cos(leg.a) || 1)) { nx = -nx; ny = -ny; } }
+    else if (ny > 0) { nx = -nx; ny = -ny; }
+    return { x: clamp(h.x + dx / 2 + nx * lift, 10, REF_W - 10), y: clamp(h.y + dy / 2 + ny * lift, 20, GROUND_Y - 2) };
+  }
+  findSpot(ang) {
+    for (let tries = 0; tries < 6; tries++) {
+      const a = ang + (Math.random() - 0.5) * 0.6 * (1 + tries * 0.5), c = Math.cos(a), s = Math.sin(a);
+      const hit = rayPlat(this.x, this.y, c, s, LL.REACH * 0.92, 4);
+      if (hit && hit.t > 26) return { x: hit.x - c * 2, y: hit.y - s * 2, plat: hit.plat };
+    }
+    return null;
+  }
+  plant(leg, spot) {
+    leg.fx = spot.x; leg.fy = spot.y; leg.plat = spot.plat; leg.ox = spot.x - spot.plat.x; leg.oy = spot.y - spot.plat.y;
+    leg.st = 'planted'; leg.bx = this.x; leg.by = this.y;
+  }
+  legSegs(leg) { const h = this.hip(leg), k = this.knee(leg); return [[h.x, h.y, k.x, k.y], [k.x, k.y, leg.fx, leg.fy]]; }
+  nearLeg(px, py, pad) {
+    let best = null, bd = pad;
+    for (const leg of this.legs) for (const [x1, y1, x2, y2] of this.legSegs(leg)) {
+      const dx = x2 - x1, dy = y2 - y1, l2 = dx * dx + dy * dy || 1, t = clamp(((px - x1) * dx + (py - y1) * dy) / l2, 0, 1);
+      const d = dist(x1 + dx * t, y1 + dy * t, px, py);
+      if (d < bd) { bd = d; best = leg; }
+    }
+    return best;
+  }
+  /* ---------- web / bite rules ---------- */
+  webbable() { return this.alive; }
+  webHit(x, y) {
+    if (this.phase === 'ball') return dist(x, y, this.x, this.y) < this.hitR;
+    this.webLeg = this.nearLeg(x, y, 5);
+    if (this.webLeg) return true;
+    if (dist(x, y, this.x, this.y) < this.hitR) { this.webLeg = null; return true; }
+    return false;
+  }
+  aimPoints() {
+    if (this.phase === 'ball') return [{ x: this.x, y: this.y }];
+    const out = [];
+    for (const leg of this.legs) if (leg.webT <= 0) { const k = this.knee(leg); out.push(k, { x: (k.x + leg.fx) / 2, y: (k.y + leg.fy) / 2 }); }
+    return out;
+  }
+  onWeb(W, S) {
+    if (this.phase === 'ball') return super.onWeb(W, S);
+    const leg = this.webLeg;
+    if (!leg) {
+      SFX.play('noeffect'); burst(W, this.x, this.y, 8, ['#ffffff', '#b8c0cc'], 50, 0.4);
+      floater(W, this.x, this.y - 20, 'ARMORED!', '#ffb3c1'); floater(W, this.x, this.y - 8, 'WEB THE LEGS', '#ffd23f');
+      return 'none';
+    }
+    const hx = (this.knee(leg).x + leg.fx) / 2, hy = (this.knee(leg).y + leg.fy) / 2;
+    if (!S.powered) {
+      SFX.play('noeffect'); burst(W, hx, hy, 8, ['#ffffff', '#b8c0cc'], 50, 0.4);
+      floater(W, hx, hy - 18, 'NO EFFECT!', '#ffb3c1'); floater(W, hx, hy - 6, 'NEED 5 FLIES', '#ffd23f');
+      return 'none';
+    }
+    const was = leg.webT > 0;
+    if (leg.st !== 'planted') {   // a leg caught mid-swing slams down onto the nearest surface
+      const h = this.hip(leg), a = Math.atan2(leg.fy - h.y, leg.fx - h.x);
+      const hit = rayPlat(h.x, h.y, Math.cos(a), Math.sin(a), LL.REACH, 4) || rayPlat(h.x, h.y, 0, 1, LL.REACH, 4);
+      if (hit) this.plant(leg, { x: hit.x - Math.cos(a) * 2, y: hit.y - 2, plat: hit.plat }); else leg.st = 'planted';
+    }
+    leg.webT = W.D.freeze;
+    SFX.play('trap'); shake(0.15, 2);
+    burst(W, hx, hy, 16, ['#ffffff', '#dfe8f5', '#ffd23f'], 90, 0.6);
+    floater(W, hx, hy - 18, was ? 'MORE WEB!' : 'LEG WEBBED!', '#ffffff');
+    if (!was && W.rules.onEnemyTrapped) W.rules.onEnemyTrapped(this, S);
+    return 'freeze';
+  }
+  biteable() { return this.phase === 'ball' && this.frozenT > 0; }
+  biteCheck(s) {
+    if (this.phase === 'ball') return this.frozenT > 0 && dist(s.x, s.y, this.x, this.y) < s.r + this.r + 4;
+    for (const leg of this.legs) {
+      if (leg.webT <= 0) continue;
+      for (const [x1, y1, x2, y2] of this.legSegs(leg)) if (segCircle(x1, y1, x2, y2, s.x, s.y, s.r + 4)) { this.biteLeg = leg; return true; }
+    }
+    return false;
+  }
+  defeat(W, by) {
+    if (this.phase === 'legs') { if (this.biteLeg) this.tearOff(W, this.biteLeg); this.biteLeg = null; return; }
+    super.defeat(W, by);
+  }
+  tearOff(W, leg) {
+    const i = this.legs.indexOf(leg);
+    if (i < 0) return;
+    const [[hx, hy, kx, ky], [, , fx, fy]] = this.legSegs(leg);
+    this.legs.splice(i, 1);
+    for (const [x1, y1, x2, y2] of [[hx, hy, kx, ky], [kx, ky, fx, fy]]) {
+      const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
+      this.debris.push({ x: cx, y: cy, hx: (x2 - x1) / 2, hy: (y2 - y1) / 2, rot: 0, vr: (Math.random() - 0.5) * 8, vx: (Math.random() - 0.5) * 120, vy: -120 - Math.random() * 80, life: 1.6 });
+    }
+    SFX.play('bite'); SFX.play('snap'); shake(0.35, 5);
+    burst(W, kx, ky, 22, ['#ffd23f', '#ff8a00', '#ffffff', '#9aa4b4'], 140, 0.7);
+    burst(W, this.x, this.y, 10, ['#ffd23f', '#ff8a00'], 90, 0.5);
+    floater(W, kx, ky - 14, 'LEG DESTROYED!', '#ffd23f');
+    if (this.legs.length) {
+      floater(W, this.x, this.y - 24, this.legs.length + (this.legs.length === 1 ? ' LEG LEFT' : ' LEGS LEFT'), '#ff8c42');
+      this.relocT = 0; this.flee = true;    // scuttle away to regroup
+      if (W.rules.onBossPhase) W.rules.onBossPhase(this, 'leg');
+    } else this.startBall(W);
+  }
+  startBall(W) {
+    this.phase = 'ball'; this.r = LL.BALL_R; this.hitR = 14; this.vx = (Math.random() - 0.5) * 60; this.vy = -60; this.grounded = false; this.jumpCD = 1.4;
+    SFX.play('shriek'); shake(0.4, 5);
+    burst(W, this.x, this.y, 30, ['#ffd23f', '#ff8a00', '#ffffff', '#5c6270'], 150, 0.8);
+    if (W.rules.onBossPhase) W.rules.onBossPhase(this, 'ball');
+  }
+  /* ---------- simulation ---------- */
+  update(dt, W) {
+    if (this.mirror) { this.glide(dt); return; }
+    for (const d of this.debris) { d.life -= dt; d.vy += G * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.rot += d.vr * dt; if (d.y > GROUND_Y - 2) { d.y = GROUND_Y - 2; d.vy *= -0.3; d.vx *= 0.6; d.vr *= 0.5; } }
+    this.debris = this.debris.filter(d => d.life > 0);
+    this.hurtCD -= dt;
+    if (this.phase === 'ball') this.updateBall(dt, W); else this.updateLegs(dt, W);
+  }
+  updateLegs(dt, W) {
+    const D = W.D, t = W.nearestTarget(this.x, this.y);
+    for (const leg of this.legs) if (leg.webT > 0) { leg.webT -= dt; if (leg.webT <= 0) { leg.webT = 0; floater(W, leg.fx, leg.fy - 16, 'BROKE FREE!', '#ff8c42'); SFX.play('free'); burst(W, leg.fx, leg.fy, 10, ['#ffffff', '#dfe8f5'], 70, 0.5); } }
+    if (this.bootT > 0) { this.bootT -= dt; this.updateFeet(dt, W, 2); return; }
+    const d = t ? dist(this.x, this.y, t.x, t.y) : 999;
+    this.relocT -= dt; this.strikeCD -= dt;
+    // choose where to go
+    let tx = this.x, ty = this.y, speed = 0;
+    if (this.reloc) {
+      tx = this.reloc.x; ty = this.reloc.y; speed = 150 * D.speed;
+      if (dist(this.x, this.y, tx, ty) < 12 || this.relocTime > 3) { this.reloc = null; this.relocT = (7 + Math.random() * 5) / Math.sqrt(D.aggro); }
+      this.relocTime += dt;
+    } else if (t) {
+      const close = d < LL.AGGRO;
+      this.mode = close ? 'chase' : 'stalk';
+      tx = t.x; ty = clamp(t.y - (close ? 50 : 70), 40, 250);
+      speed = (close ? 60 : 30) * D.speed;
+      if (this.relocT <= 0 && (!close || this.flee)) this.startReloc(t);
+    }
+    // steer the body (it floats on its legs)
+    const dx = tx - this.x, dy = ty - this.y, dd = Math.hypot(dx, dy) || 1, s = speed * Math.min(1, dd / 40);
+    this.vx = approach(this.vx, dx / dd * s, 320 * dt); this.vy = approach(this.vy, dy / dd * s, 320 * dt);
+    this.x += this.vx * dt; this.y += this.vy * dt;
+    pushOut(this, this.r + 3);
+    this.x = clamp(this.x, 30, REF_W - 30); this.y = clamp(this.y, 34, GROUND_Y - 30);
+    // webbed legs hold the body on a leash
+    for (const leg of this.legs) if (leg.webT > 0) {
+      const ld = dist(this.x, this.y, leg.fx, leg.fy);
+      if (ld > LL.REACH) { const k = LL.REACH / ld; this.x = leg.fx + (this.x - leg.fx) * k; this.y = leg.fy + (this.y - leg.fy) * k; }
+    }
+    this.updateFeet(dt, W, this.reloc ? 3 : 2);
+    if (t) this.eyeA += angDiff(this.eyeA, Math.atan2(t.y - this.y, t.x - this.x)) * Math.min(1, dt * 6);
+    // attacks: only once a spider is close
+    if (t && this.mode === 'chase' && !this.reloc && this.strikeCD <= 0 && d < LL.STRIKE_RANGE && lineOfSight(this.x, this.y, t.x, t.y)) this.startStrike(W, t);
+    this.updateStrike(dt, W);
+    if (t && this.hurtCD <= 0) for (const tg of W.targets()) if (dist(this.x, this.y, tg.x, tg.y) < this.r + tg.r - 1) { W.hurt(tg, 'hit', this); this.hurtCD = 0.5; }
+    this.hellShots(dt, W, t);
+  }
+  startReloc(t) {
+    for (let tries = 0; tries < 30; tries++) {
+      const x = 60 + Math.random() * (REF_W - 120), y = 50 + Math.random() * 190;
+      const dp = dist(x, y, t.x, t.y);
+      if (this.flee ? dp < 170 : (dp < LL.AGGRO + 30 || dp > 230)) continue;
+      if (findCollision(x, y, this.r + 12)) continue;
+      this.reloc = { x, y }; this.relocTime = 0; this.flee = false; SFX.play('dash');
+      return;
+    }
+    this.relocT = 2; this.flee = false;
+  }
+  updateFeet(dt, W, maxStep) {
+    let stepping = this.legs.filter(l => l.st === 'step').length;
+    for (const leg of this.legs) {
+      if (leg.st === 'planted') {
+        if (leg.plat && leg.plat.move) { leg.fx = leg.plat.x + leg.ox; leg.fy = leg.plat.y + leg.oy; }
+        if (leg.webT > 0) continue;
+        const h = this.hip(leg), dh = dist(h.x, h.y, leg.fx, leg.fy);
+        const moved = dist(this.x, this.y, leg.bx, leg.by) > 70;
+        if ((moved || dh > LL.REACH || dh < 16) && (stepping < maxStep || dh > LL.REACH * 1.12)) {
+          const spot = this.findSpot(leg.a);
+          if (spot) { leg.st = 'step'; leg.t = 0; leg.sx = leg.fx; leg.sy = leg.fy; leg.tplat = spot.plat; leg.tox = spot.x - spot.plat.x; leg.toy = spot.y - spot.plat.y; leg.dur = clamp(dist(leg.fx, leg.fy, spot.x, spot.y) / 520, 0.12, 0.32); stepping++; }
+          else if (dh > LL.REACH) leg.st = 'dangle';
+        }
+      } else if (leg.st === 'step') {
+        leg.t += dt;
+        const k = smooth01(leg.t / leg.dur), tx = leg.tplat.x + leg.tox, ty = leg.tplat.y + leg.toy;
+        const lift = Math.sin(Math.PI * k) * 16;
+        leg.fx = lerp(leg.sx, tx, k) + Math.cos(leg.a) * lift * 0.3; leg.fy = lerp(leg.sy, ty, k) - lift;
+        if (leg.t >= leg.dur) { this.plant(leg, { x: tx, y: ty, plat: leg.tplat }); SFX.play('step', 0.06); }
+      } else if (leg.st === 'dangle') {
+        const h = this.hip(leg);
+        leg.fx = lerp(leg.fx, h.x + Math.cos(leg.a) * 26, Math.min(1, dt * 6)); leg.fy = lerp(leg.fy, h.y + Math.sin(leg.a) * 26 + 22, Math.min(1, dt * 6));
+        leg.retryT -= dt;
+        if (leg.retryT <= 0) { leg.retryT = 0.25; const spot = this.findSpot(leg.a); if (spot) { leg.st = 'step'; leg.t = 0; leg.sx = leg.fx; leg.sy = leg.fy; leg.tplat = spot.plat; leg.tox = spot.x - spot.plat.x; leg.toy = spot.y - spot.plat.y; leg.dur = 0.2; } }
+      }
+    }
+  }
+  startStrike(W, t) {
+    let best = null, bd = Infinity;
+    for (const leg of this.legs) if (leg.webT <= 0 && (leg.st === 'planted' || leg.st === 'dangle')) { const d = dist(leg.fx, leg.fy, t.x, t.y); if (d < bd) { bd = d; best = leg; } }
+    if (!best) return;
+    best.st = 'windup'; best.t = 0; best.dur = 0.35 + W.D.windup; best.aim = { x: t.x, y: t.y }; best.hit = false;
+    this.strikeCD = (2.4 + Math.random() * 1.2) / W.D.aggro;
+    SFX.play('windup');
+  }
+  updateStrike(dt, W) {
+    for (const leg of this.legs) {
+      if (leg.st === 'windup') {
+        leg.t += dt;
+        const t = W.nearestTarget(this.x, this.y); if (t) leg.aim = { x: t.x, y: t.y };
+        const a = Math.atan2(leg.aim.y - this.y, leg.aim.x - this.x);
+        leg.fx = lerp(leg.fx, this.x + Math.cos(a) * 26, Math.min(1, dt * 10)); leg.fy = lerp(leg.fy, this.y + Math.sin(a) * 26, Math.min(1, dt * 10));
+        if (leg.t >= leg.dur) {
+          const len = Math.min(LL.REACH, dist(this.x, this.y, leg.aim.x, leg.aim.y) + 24);
+          leg.st = 'strike'; leg.t = 0; leg.tx = this.x + Math.cos(a) * len; leg.ty = this.y + Math.sin(a) * len;
+          SFX.play('tongue');
+        }
+      } else if (leg.st === 'strike') {
+        const dx = leg.tx - leg.fx, dy = leg.ty - leg.fy, d = Math.hypot(dx, dy), step = 640 * W.D.speed * dt;
+        if (d <= step) { leg.fx = leg.tx; leg.fy = leg.ty; leg.st = 'hold'; leg.t = 0; }
+        else { leg.fx += dx / d * step; leg.fy += dy / d * step; }
+        const hp = platAt(leg.fx, leg.fy);
+        if (hp) { leg.st = 'hold'; leg.t = 0; burst(W, leg.fx, leg.fy, 6, ['#ffd23f', '#ffffff'], 60, 0.3); }
+        if (!leg.hit) {
+          const k = this.knee(leg);
+          for (const tg of W.targets()) if (segCircle(k.x, k.y, leg.fx, leg.fy, tg.x, tg.y, tg.r + 1)) { leg.hit = true; W.hurt(tg, 'hit', this); break; }
+        }
+      } else if (leg.st === 'hold') {
+        leg.t += dt;
+        if (leg.t > 0.18) { leg.st = 'dangle'; leg.retryT = 0; }
+      }
+    }
+  }
+  hellShots(dt, W, t) {
+    if (!W.D.hell || !t || this.frozenT > 0) return;
+    this.fireCD -= dt;
+    if (this.fireCD <= 0 && dist(this.x, this.y, t.x, t.y) < 210 && lineOfSight(this.x, this.y, t.x, t.y)) {
+      this.fireCD = 3.5 + Math.random() * 1.5;
+      const a = Math.atan2(t.y - this.y, t.x - this.x);
+      W.enemyShots.push({ kind: 'fire', x: this.x, y: this.y, vx: Math.cos(a) * 180, vy: Math.sin(a) * 180, life: 1.2, src: this });
+      SFX.play('ignite');
+    }
+  }
+  updateBall(dt, W) {
+    const D = W.D, frozen = this.tickFrozen(dt, W), t = W.nearestTarget(this.x, this.y);
+    this.jumpCD -= dt;
+    if (!frozen && t) {
+      const sg = Math.sign(t.x - this.x) || 1, roll = 125 * D.speed;
+      this.vx = approach(this.vx, sg * roll, (this.grounded ? 230 : 90) * dt);
+      if (this.grounded && this.jumpCD <= 0) {
+        this.vy = -(250 + Math.random() * 110) * Math.min(1.25, Math.sqrt(D.speed)); this.vx += sg * 50;
+        this.jumpCD = (1.3 + Math.random() * 1.5) / D.aggro; this.grounded = false; SFX.play('jump', 0.1);
+      }
+    } else this.vx = approach(this.vx, 0, (this.grounded ? 260 : 40) * dt);
+    this.vy = Math.min(this.vy + G * dt, 460);
+    const sp = Math.hypot(this.vx, this.vy); if (sp > 360) { this.vx *= 360 / sp; this.vy *= 360 / sp; }
+    // move in small steps and bounce off every surface
+    const steps = Math.max(1, Math.ceil(sp * dt / 3)), sdt = dt / steps;
+    this.grounded = false;
+    for (let i = 0; i < steps; i++) {
+      this.x += this.vx * sdt; this.y += this.vy * sdt;
+      for (const p of PLATS) {
+        const cx = clamp(this.x, p.x, p.x + p.w), cy = clamp(this.y, p.y, p.y + p.h), ddx = this.x - cx, ddy = this.y - cy, dd = Math.hypot(ddx, ddy);
+        if (dd >= this.r) continue;
+        let nx, ny;
+        if (dd > 0.001) { nx = ddx / dd; ny = ddy / dd; } else { nx = 0; ny = -1; }
+        this.x = cx + nx * this.r; this.y = cy + ny * this.r;
+        if (p.move) { this.x += p.dx || 0; this.y += p.dy || 0; }
+        const vn = this.vx * nx + this.vy * ny;
+        if (vn < 0) {
+          const bounce = vn < -140 ? 0.55 : 0;
+          this.vx -= (1 + bounce) * vn * nx; this.vy -= (1 + bounce) * vn * ny;
+          if (vn < -200) { SFX.play('land', 0.08); burst(W, this.x - nx * this.r, this.y - ny * this.r, 4, ['#ffd23f', '#9aa4b4'], 50, 0.3, 80, 1); }
+        }
+        if (ny < -0.6) { this.grounded = true; if (p.belt) this.x += p.belt * sdt; }
+      }
+    }
+    this.x = clamp(this.x, 20, REF_W - 20);
+    if (this.y < WORLD_TOP + this.r + 12) { this.y = WORLD_TOP + this.r + 12; if (this.vy < 0) this.vy = 0; }
+    if (this.y > REF_H) { this.x = REF_W / 2; this.y = 60; this.vx = this.vy = 0; }
+    this.rot += this.vx / this.r * dt;
+    if (t) this.eyeA = Math.atan2(t.y - this.y, t.x - this.x);
+    if (frozen || !t) return;
+    if (this.hurtCD <= 0) for (const tg of W.targets()) if (dist(this.x, this.y, tg.x, tg.y) < this.r + tg.r - 1) { W.hurt(tg, 'hit', this); this.hurtCD = 0.5; }
+    if (Math.random() < dt * 6) W.particles.push({ x: this.x + (Math.random() - 0.5) * 12, y: this.y + (Math.random() - 0.5) * 12, vx: (Math.random() - 0.5) * 30, vy: -40, life: 0.4, max: 0.4, color: pick(Math.random, ['#ffd23f', '#ff8a00']), size: 1, grav: 120 });
+    this.hellShots(dt, W, t);
+  }
+  burstColors() { return ['#ffd23f', '#ff8a00', '#ffffff', '#9aa4b4', '#ff2d2d']; }
+  /* ---------- drawing ---------- */
+  draw(W) {
+    if (!this.alive) return;
+    for (const d of this.debris) {
+      ctx.globalAlpha = clamp(d.life * 2, 0, 1);
+      const c = Math.cos(d.rot), s = Math.sin(d.rot), ax = d.hx * c - d.hy * s, ay = d.hx * s + d.hy * c;
+      ctx.strokeStyle = '#1a1c24'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(d.x - ax, d.y - ay); ctx.lineTo(d.x + ax, d.y + ay); ctx.stroke();
+      ctx.strokeStyle = '#9aa4b4'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(d.x - ax, d.y - ay); ctx.lineTo(d.x + ax, d.y + ay); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    const bob = this.phase === 'legs' ? Math.sin(T * 2.4) * 1.5 : 0;
+    if (this.phase === 'legs') for (const leg of this.legs) this.drawLeg(leg, W, bob);
+    drawLongLegsBody(this.x, this.y + bob, {
+      eye: this.eyeA, alert: this.mode === 'chase' || this.phase === 'ball', boot: this.bootT, hell: W.D.hell,
+      rot: this.rot, ball: this.phase === 'ball', frozen: this.frozenT > 0, shiver: this.frozenT > 0 && this.frozenT < 1.5,
+      stubs: this.phase === 'legs' ? this.maxLegs - this.legs.length : this.maxLegs,
+    });
+    if (this.phase === 'ball') this.drawFreezeBar(W);
+  }
+  drawLeg(leg, W, bob) {
+    const h = this.hip(leg); h.y += bob;
+    const k = this.knee(leg);
+    const warn = leg.st === 'windup' && Math.floor(T * 16) % 2 === 0, hot = leg.st === 'strike' || leg.st === 'hold';
+    ctx.lineCap = 'round';
+    const seg = (x1, y1, x2, y2, wOut, wIn, col) => {
+      ctx.strokeStyle = '#1a1c24'; ctx.lineWidth = wOut; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.strokeStyle = col; ctx.lineWidth = wIn; ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    };
+    const col = warn ? '#ff3b3b' : hot ? '#ffb070' : '#9aa4b4';
+    seg(h.x, h.y, k.x, k.y, 3.5, 1.5, col);
+    seg(k.x, k.y, leg.fx, leg.fy, 3, 1.2, warn ? '#ff3b3b' : hot ? '#ffd0a0' : '#c4ccd8');
+    pxCircle(ctx, k.x, k.y, 3, '#2a2d36'); pxCircle(ctx, k.x, k.y, 2, '#5c6270');
+    ctx.fillStyle = W.D.hell || warn ? '#ff2d2d' : '#ffd23f'; ctx.fillRect(Math.round(k.x), Math.round(k.y) - 1, 1, 1);
+    pxCircle(ctx, leg.fx, leg.fy, 2, '#2a2d36');
+    ctx.fillStyle = '#7a8090'; ctx.fillRect(Math.round(leg.fx) - 2, Math.round(leg.fy) + 1, 1, 2); ctx.fillRect(Math.round(leg.fx) + 2, Math.round(leg.fy) + 1, 1, 2);
+    ctx.lineCap = 'butt';
+    if (leg.webT > 0) {
+      // wrapped in silk: thick white sleeve + criss-cross strands
+      ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(k.x, k.y); ctx.lineTo(leg.fx, leg.fy); ctx.stroke();
+      ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(h.x, h.y); ctx.lineTo(k.x, k.y); ctx.stroke(); ctx.lineCap = 'butt';
+      ctx.fillStyle = '#ffffff';
+      for (let i = 1; i < 6; i++) { const q = i / 6, x = lerp(k.x, leg.fx, q), y = lerp(k.y, leg.fy, q); ctx.fillRect(Math.round(x) - 3, Math.round(y), 7, 1); }
+      if (leg.webT < 1.5 && Math.floor(T * 12) % 2) { ctx.fillStyle = '#ff8c42'; ctx.fillRect(Math.round(leg.fx) - 1, Math.round(leg.fy) - 1, 3, 3); }
+      const mx = (k.x + leg.fx) / 2, my = (k.y + leg.fy) / 2, w = 22, frac = clamp(leg.webT / W.D.freeze, 0, 1);
+      ctx.fillStyle = '#140c26'; ctx.fillRect(Math.round(mx - w / 2 - 1), Math.round(my - 16), w + 2, 4);
+      ctx.fillStyle = '#dfe8f5'; ctx.fillRect(Math.round(mx - w / 2), Math.round(my - 15), Math.round(w * frac), 2);
+      if (Math.floor(T * 4) % 2 === 0) drawText('BITE!', mx, my - 26, 1, '#ffd23f', 'center', '#140c26');
+    }
+  }
+}
+
+/* Body sprite: riveted steel orb with a single red eye. o.ball = rolling (no legs) */
+function drawLongLegsBody(x, y, o) {
+  let sx = x, sy = y;
+  if (o.shiver) { sx += Math.round(Math.sin(T * 60)); }
+  if (o.hell) { ctx.globalAlpha = 0.25 + 0.15 * Math.sin(T * 6); pxCircle(ctx, sx, sy, 17, '#ff2d2d'); ctx.globalAlpha = 1; }
+  if (!o.ball) {   // antenna with a blinking light
+    ctx.fillStyle = '#2a2d36'; ctx.fillRect(Math.round(sx), Math.round(sy) - 17, 1, 6);
+    ctx.fillStyle = Math.floor(T * 3) % 2 ? '#ff2d2d' : '#5a1a1a'; ctx.fillRect(Math.round(sx) - 1, Math.round(sy) - 19, 3, 2);
+  }
+  pxCircle(ctx, sx, sy, 12, '#1a1c24');
+  pxCircle(ctx, sx, sy, 11, '#6a7484');
+  pxCircle(ctx, sx - 2, sy - 3, 7, '#8a94a4');
+  pxCircle(ctx, sx - 4, sy - 5, 3, '#b4bcc8');
+  // panel seams + rivets turn with the body when it rolls
+  const r = o.rot || 0;
+  ctx.fillStyle = '#3a3f4c';
+  for (let k = 0; k < 6; k++) { const a = r + k * Math.PI / 3; ctx.fillRect(Math.round(sx + Math.cos(a) * 9), Math.round(sy + Math.sin(a) * 9), 2, 2); }
+  for (let k = 0; k < 2; k++) { const a = r + k * Math.PI; for (let q = 4; q < 11; q++) ctx.fillRect(Math.round(sx + Math.cos(a) * q), Math.round(sy + Math.sin(a) * q), 1, 1); }
+  // torn leg stubs spark once legs come off
+  if (o.stubs && Math.random() < 0.5) { const a = Math.random() * TAU; ctx.fillStyle = pick(Math.random, ['#ffd23f', '#ff8a00', '#ffffff']); ctx.fillRect(Math.round(sx + Math.cos(a) * 12), Math.round(sy + Math.sin(a) * 12), 1, 1); }
+  // eye
+  const ex = sx + Math.cos(o.eye) * 4, ey = sy + 1 + Math.sin(o.eye) * 3;
+  pxCircle(ctx, ex, ey, 4, '#1a0606');
+  const lit = o.boot > 0 ? (Math.random() < 0.5 ? '#5a1a1a' : '#ff2d2d') : o.alert ? '#ff4a2a' : '#c42222';
+  pxCircle(ctx, ex, ey, o.alert ? 3 : 2, o.frozen ? '#7a3a3a' : lit);
+  ctx.fillStyle = '#ffffff'; ctx.fillRect(Math.round(ex) - 1, Math.round(ey) - 1, 1, 1);
+  if (o.alert && !o.frozen && o.boot <= 0) { ctx.globalAlpha = 0.25; pxCircle(ctx, ex, ey, 6, '#ff2d2d'); ctx.globalAlpha = 1; }
+  if (o.frozen) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1;
+    for (let k = 0; k < 5; k++) { const a = k * 1.3 + 0.4; ctx.beginPath(); ctx.moveTo(sx + Math.cos(a) * 13, sy + Math.sin(a) * 13); ctx.lineTo(sx - Math.cos(a + 0.9) * 13, sy - Math.sin(a + 0.9) * 13); ctx.stroke(); }
+    ctx.globalAlpha = 0.35; pxCircle(ctx, sx, sy, 12, '#ffffff'); ctx.globalAlpha = 1;
+  }
+}
+/* Small static preview for menus (practice card, overworld) */
+function drawLongLegsPreview(x, y, t) {
+  const bob = Math.sin(t * 2.4) * 1.5, by = y - 26 + bob;
+  ctx.lineCap = 'round';
+  for (const [fx, kx, ky] of [[-34, -26, -44], [-16, -14, -40], [16, 14, -40], [34, 26, -44]]) {
+    ctx.strokeStyle = '#1a1c24'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x + kx, y + ky); ctx.lineTo(x + fx, y); ctx.stroke();
+    ctx.strokeStyle = '#9aa4b4'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x, by); ctx.lineTo(x + kx, y + ky); ctx.lineTo(x + fx, y); ctx.stroke();
+    pxCircle(ctx, x + kx, y + ky, 2, '#5c6270');
+  }
+  ctx.lineCap = 'butt';
+  drawLongLegsBody(x, by, { eye: Math.PI * 0.75, alert: false, boot: 0, rot: 0 });
+}
+
 /* ===== 70_world.js ===== */
 /* =====================================================================
    70_WORLD - the simulation container shared by campaign, VS and warm-up
@@ -2608,7 +3234,7 @@ class World {
     this.claimed = new Map();                   // fly id -> time (guest optimistic claims)
     this.ambient = [];
     const ar = rng(this.seed ^ 0x55);
-    const n = this.biome === 3 ? 26 : 4;
+    const n = this.biome >= 3 ? 26 : 4;
     for (let i = 0; i < n; i++) this.ambient.push({ x: ar() * REF_W, y: 40 + ar() * 220, t: ar() * 10, c: pick(ar, ['#ff8cc6', '#ffd23f', '#9ad0ff', '#ffffff']) });
     buildLevelArt(this.L);
   }
@@ -2661,6 +3287,11 @@ class World {
   /* ---------- simulation step ---------- */
   step(dt, controlsFor) {
     this.time += dt;
+    if (this.L.movers) {
+      updateMovers(this.L, this.time);
+      // ropes anchored to a moving lift travel with it
+      for (const s of this.spiders) if (s.rope && s.rope.plat && s.rope.plat.move) { s.rope.ax += s.rope.plat.dx; s.rope.ay += s.rope.plat.dy; }
+    }
     for (const s of this.spiders) s.update(dt, controlsFor(s), this);
     for (const r of this.remotes.values()) r.update(dt);
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
@@ -2680,7 +3311,9 @@ class World {
     for (const s of this.spiders) {
       if (!s.alive || s.immobile) continue;
       for (const e of this.enemies) {
-        if (e.alive && e.biteable() && dist(s.x, s.y, e.x, e.y) < s.r + e.r + 4) { if (this.rules.onEnemyBite) this.rules.onEnemyBite(e, s); }
+        if (!e.alive) continue;
+        const can = e.biteCheck ? e.biteCheck(s) : e.biteable() && dist(s.x, s.y, e.x, e.y) < s.r + e.r + 4;
+        if (can && this.rules.onEnemyBite) this.rules.onEnemyBite(e, s);
       }
       if (this.mode === 'vs' && s.powered && this.rules.onPvPBite) {
         for (const o of this.allSpiders()) if (o !== s && o.alive && o.team !== s.team && o.frozenT > 0 && dist(s.x, s.y, o.x, o.y) < s.r + o.r + 3) this.rules.onPvPBite(s, o);
@@ -2692,9 +3325,10 @@ class World {
       if (!sc.landed) {
         const prevY = sc.y;
         sc.vy = Math.min(sc.vy + G * dt, 400); sc.y += sc.vy * dt;
-        for (const p of PLATS) if (sc.vy > 0 && sc.x >= p.x - 3 && sc.x <= p.x + p.w + 3 && prevY + 9 <= p.y + 1 && sc.y + 9 >= p.y) { sc.y = p.y - 9; sc.landed = true; sc.vy = 0; break; }
+        for (const p of PLATS) if (sc.vy > 0 && sc.x >= p.x - 3 && sc.x <= p.x + p.w + 3 && prevY + 9 <= p.y + 1 + Math.max(0, -(p.dy || 0)) && sc.y + 9 >= p.y) { sc.y = p.y - 9; sc.landed = true; sc.vy = 0; if (p.move) { sc.plat = p; sc.ox = sc.x - p.x; } break; }
         if (sc.y > WATER_Y - 20) { sc.y = WATER_Y - 20; sc.landed = true; sc.vy = 0; }
       }
+      if (sc.plat) { sc.x = sc.plat.x + sc.ox; sc.y = sc.plat.y - 9; }
       for (const s of this.spiders) if (s.alive && sc.t > 0.6 && dist(s.x, s.y, sc.x, sc.y) < s.r + 11) { this.starCoin = null; if (this.rules.onStarCoin) this.rules.onStarCoin(s, sc); break; }
       if (this.starCoin && Math.random() < dt * 12) this.particles.push({ x: sc.x + (Math.random() - 0.5) * 16, y: sc.y + (Math.random() - 0.5) * 16, vx: 0, vy: -15, life: 0.5, max: 0.5, color: '#fff3a0', size: 1, grav: 0 });
     }
@@ -2705,7 +3339,7 @@ class World {
       p.vy += p.grav * dt; p.x += p.vx * dt; p.y += p.vy * dt;
     }
     for (let i = this.floaters.length - 1; i >= 0; i--) { const f = this.floaters[i]; f.life -= dt; f.y -= 22 * dt; if (f.life <= 0) this.floaters.splice(i, 1); }
-    for (const a of this.ambient) { a.t += dt; if (this.biome === 3) { a.x += Math.sin(a.t * 0.5) * 6 * dt; a.y += Math.cos(a.t * 0.7) * 4 * dt; } else { a.x += Math.cos(a.t * 0.7) * 20 * dt; a.y += Math.sin(a.t * 1.3) * 15 * dt; } a.x = clamp(a.x, 20, 620); a.y = clamp(a.y, 30, 290); }
+    for (const a of this.ambient) { a.t += dt; if (this.biome >= 3) { a.x += Math.sin(a.t * 0.5) * 6 * dt; a.y += Math.cos(a.t * 0.7) * 4 * dt; } else { a.x += Math.cos(a.t * 0.7) * 20 * dt; a.y += Math.sin(a.t * 1.3) * 15 * dt; } a.x = clamp(a.x, 20, 620); a.y = clamp(a.y, 30, 290); }
     for (const [id, t] of this.claimed) if (this.time - t > 3) this.claimed.delete(id);
   }
   updateEnemyShots(dt) {
@@ -2735,8 +3369,10 @@ class World {
     ctx.translate(sx, sy);
     ctx.drawImage(ART.sky, 0, 0);
     for (const c of ART.clouds) ctx.drawImage(ART.cloudSprites[c.spr], Math.round(c.x), Math.round(c.y));
+    if (this.biome === 4) { ctx.save(); ctx.translate(OX, OY); drawFactoryGears(T); ctx.restore(); }
     ctx.drawImage(ART.scene, 0, 0);
     ctx.translate(OX, OY);
+    for (const p of PLATS) if (p.dyn) drawDynPlatform(p, this.time);
     drawWheat(this.L, T, false);
     this.drawAmbient();
     this.fire.draw();
@@ -2776,6 +3412,7 @@ class World {
   }
   drawAmbient() {
     for (const a of this.ambient) {
+      if (this.biome === 4) { ctx.globalAlpha = 0.25 + 0.25 * Math.sin(a.t * 2); ctx.fillStyle = '#cfe0ff'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 3) { if (a.x > 330 && a.y > 80) { ctx.globalAlpha = 0.35 + 0.3 * Math.sin(a.t * 2); ctx.fillStyle = '#ffe3a0'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; } continue; }
       if (this.biome === 2) { // seagulls
         const fy = Math.round(a.y * 0.4), fx = Math.round(a.x), w = Math.sin(a.t * 6) > 0 ? 1 : 0;
@@ -2829,11 +3466,13 @@ const Campaign = {
     if (level === 0) W.enemies.push(new Lizard(es.x, es.y));
     else if (level === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y));
     else if (level === 2) W.enemies.push(new Gecko(es.x, es.y));
-    else W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
+    else if (level === 3) W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
+    else W.enemies.push(new LongLegs(es.x, es.y, W.D));
     this.boss = W.enemies[0];
     for (let i = 0; i < 2; i++) W.spawnFly();
     const B = BIOMES[level];
-    this.banner = { text: 'LEVEL ' + (level + 1) + ': ' + B.name, sub: 'CATCH 5 GOLDEN FLIES, THEN TAKE DOWN THE ' + B.npc, t: 3, max: 3, color: '#ffd23f' };
+    this.banner = B.boss ? { text: 'BOSS: ' + B.npc, sub: 'GET 5 FLIES, THEN WEB ITS LEGS AND BITE THEM OFF', t: 3.4, max: 3.4, color: '#ff8c42' }
+                         : { text: 'LEVEL ' + (level + 1) + ': ' + B.name, sub: 'CATCH 5 GOLDEN FLIES, THEN TAKE DOWN THE ' + B.npc, t: 3, max: 3, color: '#ffd23f' };
     track('game_start', { mode: 'campaign', level: level + 1, difficulty: DIFFS[diff].name });
   },
   rules() {
@@ -2852,7 +3491,14 @@ const Campaign = {
         }
       },
       onEnemyBite(e, sp) { if (sp.powered && e.alive) e.defeat(C.W, sp.slot); },
-      onEnemyTrapped(e) { C.banner = { text: e.type === 'hive' ? 'HIVE WEBBED!' : BIOMES[C.level].npc + ' STUCK!', sub: 'CRAWL OVER AND BITE IT!', t: 1.8, max: 1.8, color: '#ffffff' }; },
+      onEnemyTrapped(e) {
+        if (e.type === 'dll') { C.banner = e.phase === 'legs' ? { text: 'LEG WEBBED!', sub: 'BITE IT TO TEAR IT OFF!', t: 1.6, max: 1.6, color: '#ffffff' } : { text: 'BODY WEBBED!', sub: 'BITE IT!', t: 1.6, max: 1.6, color: '#ffffff' }; return; }
+        C.banner = { text: e.type === 'hive' ? 'HIVE WEBBED!' : BIOMES[C.level].npc + ' STUCK!', sub: 'CRAWL OVER AND BITE IT!', t: 1.8, max: 1.8, color: '#ffffff' };
+      },
+      onBossPhase(e, what) {
+        if (what === 'ball') C.banner = { text: 'ALL LEGS GONE!', sub: 'THE BODY IS ROLLING - WEB IT, THEN BITE IT!', t: 2.6, max: 2.6, color: '#ff8c42' };
+        else C.banner = { text: 'LEG TORN OFF!', sub: e.legs.length + (e.legs.length === 1 ? ' LEG TO GO' : ' LEGS TO GO'), t: 1.6, max: 1.6, color: '#ffd23f' };
+      },
       onEnemyDefeated(e) {
         if (e !== C.boss) return;
         C.W.starCoin = { x: e.x, y: e.y - 6, vy: -140, landed: false, t: 0 };
@@ -2882,7 +3528,7 @@ const Campaign = {
     save.stars++;
     save.cleared[this.diff][this.level] = 1;
     const was = save.unlocked[this.diff];
-    save.unlocked[this.diff] = Math.max(was, Math.min(4, this.level + 2));
+    save.unlocked[this.diff] = Math.max(was, Math.min(NUM_LEVELS, this.level + 2));
     this.newUnlock = save.unlocked[this.diff] > was ? save.unlocked[this.diff] - 1 : -1;
     persist();
     SFX.play('complete');
@@ -2917,7 +3563,7 @@ const Campaign = {
       this.timer -= dt;
       if (this.timer <= 0 && this.practice) { setScene('practice'); return; }
       if (this.timer <= 0) {
-        if (this.level === 3) { setScene('ending'); SFX.play('complete'); }
+        if (this.level === NUM_LEVELS - 1) { setScene('ending'); SFX.play('complete'); }
         else { Overworld.enter(this.level, this.newUnlock); setScene('overworld'); }
       }
     }
@@ -2928,6 +3574,16 @@ const Campaign = {
     if (this.phase === 'won') return ['LEVEL CLEAR!', '#7df06a'];
     if (this.W.starCoin) return ['GRAB THE STAR COIN!', '#ffd23f'];
     if (me.stunT > 0) return ['WEBBED! MASH BUTTONS TO BREAK FREE!', Math.floor(T * 6) % 2 ? '#ffffff' : '#ff5a7a'];
+    if (boss.type === 'dll') {
+      const blink = Math.floor(T * 5) % 2 ? '#ffffff' : '#ffd23f';
+      if (boss.phase === 'legs') {
+        if (boss.legs.some(l => l.webT > 0)) return ['LEG WEBBED! BITE IT OFF!', blink];
+        if (me.powered) return ['WEB A LEG, THEN BITE IT OFF  (' + boss.legs.length + ' LEFT)', Math.floor(T * 3) % 2 ? '#ffd23f' : '#ffffff'];
+        return ['CATCH 5 GOLDEN FLIES - KEEP AWAY FROM ITS LEGS', '#ffffff'];
+      }
+      if (boss.frozenT > 0) return ['BODY STUCK! BITE IT!', blink];
+      if (me.powered) return ['WEB THE ROLLING BODY!', Math.floor(T * 3) % 2 ? '#ffd23f' : '#ffffff'];
+    }
     if (boss.frozenT > 0) return [npc + ' STUCK! BITE IT!', Math.floor(T * 5) % 2 ? '#ffffff' : '#ffd23f'];
     if (me.powered) return ['READY TO FIGHT! WEB THE ' + npc, Math.floor(T * 3) % 2 ? '#ffd23f' : '#ffffff'];
     return ['CATCH 5 GOLDEN FLIES', '#ffffff'];
@@ -2961,8 +3617,21 @@ function drawCampaignHUD(C) {
   // star tally
   drawStarShape(ctx, BW - 62, 16, 6, '#ffd23f', 0);
   drawText('x' + save.stars, BW - 54, 13, 1, '#ffd23f', 'left', '#140c26');
+  if (C.boss && C.boss.type === 'dll' && C.boss.alive) drawBossBar(C.boss);
   drawPauseButton();
   drawBanner(C.banner);
+}
+
+/* Boss health: one pip per leg, then the body */
+function drawBossBar(b) {
+  const n = b.maxLegs, w = n * 9 + 26, x = Math.round(BW / 2 - w / 2), y = BH - 18;
+  panel(x - 4, y - 4, w + 8, 16, 0.75);
+  drawText('BOSS', x, y, 1, '#ff8c42', 'left');
+  for (let i = 0; i < n; i++) {
+    const on = i < b.legs.length, px = x + 28 + i * 9;
+    ctx.fillStyle = on ? (b.legs[i].webT > 0 ? '#ffffff' : '#9aa4b4') : '#3b2b63'; ctx.fillRect(px, y, 2, 7); ctx.fillRect(px + 2, y + 5, 3, 2);
+  }
+  if (b.phase === 'ball') { pxCircle(ctx, x + w - 6, y + 3, 4, b.frozenT > 0 ? '#ffffff' : '#ff4a2a'); }
 }
 
 /* =====================================================================
@@ -2974,6 +3643,7 @@ const Overworld = {
     { x: 226, y: 170, biome: 1 },
     { x: 400, y: 236, biome: 2 },
     { x: 548, y: 122, biome: 3 },
+    { x: 560, y: 272, biome: 4 },
   ],
   cur: 0, tok: { x: 92, y: 262 }, walk: null, unlockAnim: null, map: null, mapKey: '', fog: null, puffs: [],
   enter(fromLevel, newUnlock) {
@@ -3041,7 +3711,7 @@ const Overworld = {
     g.fillStyle = '#9ad8ff'; for (let i = 0; i < 120; i++) g.fillRect(Math.floor(r() * BW), Math.floor(r() * BH), 3, 1);
     g.save(); g.translate(OX, OY);
     // landmass
-    const land = [[60, 270, 70], [140, 240, 80], [230, 180, 85], [320, 210, 70], [400, 240, 70], [480, 170, 70], [560, 120, 70], [600, 200, 50], [300, 290, 60], [180, 300, 60]];
+    const land = [[60, 270, 70], [140, 240, 80], [230, 180, 85], [320, 210, 70], [400, 240, 70], [480, 170, 70], [560, 120, 70], [600, 200, 50], [300, 290, 60], [180, 300, 60], [560, 280, 60], [490, 290, 45]];
     land.forEach(([x, y, rr]) => pxCircle(g, x, y + 4, rr + 4, '#e8d29a'));
     land.forEach(([x, y, rr]) => pxCircle(g, x, y, rr, '#5fbf52'));
     // biome regions
@@ -3056,6 +3726,13 @@ const Overworld = {
     g.fillStyle = '#a3322a'; g.fillRect(560, 96, 30, 22); g.fillStyle = '#7a231c'; for (let i = 0; i < 12; i++) g.fillRect(560 + i, 96 - i, 30 - i * 2, 1);
     g.fillStyle = '#e8dcc8'; g.fillRect(571, 106, 8, 12);
     g.fillStyle = '#8f9aa6'; g.fillRect(594, 90, 8, 28); pxCircle(g, 598, 90, 4, '#b4bfca');
+    // factory: grey yard, saw-tooth roof, smokestack
+    pxCircle(g, 560, 272, 46, '#6a6e78'); pxCircle(g, 560, 272, 38, '#7a7e88');
+    g.fillStyle = '#3a3f4c'; g.fillRect(578, 238, 30, 26);
+    for (let i = 0; i < 3; i++) for (let k = 0; k < 8; k++) { g.fillStyle = '#4a5060'; g.fillRect(578 + i * 10 + k, 238 - k, 10 - k, 1); }
+    g.fillStyle = '#9ad0ff'; g.fillRect(582, 250, 4, 4); g.fillRect(592, 250, 4, 4); g.fillRect(602, 250, 4, 4);
+    g.fillStyle = '#5c6270'; g.fillRect(612, 218, 7, 46); g.fillStyle = '#c43a3a'; g.fillRect(612, 222, 7, 2);
+    pxCircle(g, 616, 210, 5, '#b4bcc8'); pxCircle(g, 621, 202, 4, '#c8ccd4');
     // paths
     for (let i = 0; i < this.nodes.length - 1; i++) {
       for (let k = 0; k <= 1.0001; k += 0.04) { const p = this.pathPoint(i, i + 1, k); g.fillStyle = '#5a3a1f'; g.fillRect(Math.round(p.x) - 2, Math.round(p.y) - 1, 4, 4); g.fillStyle = '#f3e3b0'; g.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 1, 2, 2); }
@@ -4798,9 +5475,9 @@ Screens.practice = {
   level: 0, diff: -1, infinite: false,
   buttons() {
     if (this.diff < 0) this.diff = save.diff;
-    const cw = Math.min(120, Math.floor((BW - 40) / 4) - 8), gap = 8, total = cw * 4 + gap * 3, x0 = Math.round(BW / 2 - total / 2) + cw / 2, cy = BH / 2 - 34;
+    const N = NUM_LEVELS, cw = Math.min(112, Math.floor((BW - 30) / N) - 6), gap = 6, total = cw * N + gap * (N - 1), x0 = Math.round(BW / 2 - total / 2) + cw / 2, cy = BH / 2 - 34;
     const b = [];
-    for (let i = 0; i < 4; i++) b.push({ label: '', card: i, x: x0 + i * (cw + gap), y: cy, w: cw, h: 96, action: () => { if (this.level === i) this.play(); else { this.level = i; SFX.play('select'); } } });
+    for (let i = 0; i < N; i++) b.push({ label: '', card: i, x: x0 + i * (cw + gap), y: cy, w: cw, h: 96, action: () => { if (this.level === i) this.play(); else { this.level = i; SFX.play('select'); } } });
     const y = BH / 2 + 46;
     b.push({ label: '<', x: BW / 2 - 92, y, w: 24, h: 20, action: () => { this.diff = (this.diff + 3) % 4; } });
     b.push({ label: '>', x: BW / 2 + 92, y, w: 24, h: 20, action: () => { this.diff = (this.diff + 1) % 4; } });
@@ -4822,15 +5499,17 @@ Screens.practice = {
       const bandH = Math.ceil((b.h - 30) / B.sky.length);
       B.sky.forEach((c, k) => { ctx.fillStyle = c; ctx.fillRect(x, y + k * bandH, b.w, bandH); });
       const gy = y + b.h - 30;
-      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
-      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
+      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
+      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
       const ex = x + b.w / 2, ey = gy - 8;
       if (b.card === 0) drawLizard(ex, ey + 2, 0, -1, T * 10, Math.sin(T * 2) * 0.2, {});
       else if (b.card === 1) { drawHive(ex, ey - 22, {}); drawBee(ex + 22, ey - 18 + Math.sin(T * 5) * 3, -1, {}); }
       else if (b.card === 2) drawGecko(ex, ey + 2, 0, -1, T * 14, 0, {});
-      else drawWidow(ex, ey, 0, -1, T * 10, {});
-      drawText((b.card + 1) + '. ' + B.name, ex, gy + 8, 1, '#ffffff', 'center', '#140c26');
-      drawText(B.npc, ex, gy + 18, 1, sel ? '#ffd23f' : '#bba8ff', 'center', '#140c26');
+      else if (b.card === 3) drawWidow(ex, ey, 0, -1, T * 10, {});
+      else drawLongLegsPreview(ex, gy, T);
+      const nm = (b.card + 1) + '. ' + B.name, npc = B.npc.length * 6 > b.w - 4 ? B.npc.replace('DADDY ', '') : B.npc;
+      drawText(nm.length * 6 > b.w - 4 ? (b.card + 1) + '. ' + B.name.split(' ').pop() : nm, ex, gy + 8, 1, '#ffffff', 'center', '#140c26');
+      drawText(npc, ex, gy + 18, 1, sel ? '#ffd23f' : '#bba8ff', 'center', '#140c26');
     });
     const D = DIFFS[this.diff < 0 ? save.diff : this.diff];
     drawText(D.name, BW / 2, BH / 2 + 41, 2, D.color, 'center', '#140c26');
@@ -4851,7 +5530,7 @@ Screens.options = {
       { label: 'CONTROLS', action: () => setScene('controls') },
       { label: Screens.options.confirmReset ? 'TAP AGAIN TO ERASE' : 'RESET PROGRESS', action: () => {
         if (!Screens.options.confirmReset) { Screens.options.confirmReset = true; return; }
-        save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]; persist(); Screens.options.confirmReset = false;
+        save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]]; persist(); Screens.options.confirmReset = false;
       } },
       { label: 'BACK', action: () => { Screens.options.confirmReset = false; setScene(optionsReturn); } },
     ];
@@ -5027,7 +5706,7 @@ Screens.ending = {
     const cx = BW / 2, y0 = BH / 2 + 46, d = Campaign.diff;
     const b = [];
     if (d < 3) b.push({ label: 'TRY ' + DIFFS[d + 1].name, x: cx, y: y0, w: 190, h: 22, action: () => { save.diff = d + 1; persist(); Overworld.enter(0); setScene('overworld'); } });
-    b.push({ label: 'WORLD MAP', x: cx, y: y0 + (d < 3 ? 28 : 0), w: 190, h: 22, action: () => { Overworld.enter(3); setScene('overworld'); } });
+    b.push({ label: 'WORLD MAP', x: cx, y: y0 + (d < 3 ? 28 : 0), w: 190, h: 22, action: () => { Overworld.enter(NUM_LEVELS - 1); setScene('overworld'); } });
     b.push({ label: 'MAIN MENU', x: cx, y: y0 + (d < 3 ? 56 : 28), w: 190, h: 22, action: () => setScene('menu') });
     return b;
   },
@@ -5041,7 +5720,7 @@ Screens.ending = {
     drawMenuBackdrop(); dim(0.55);
     for (const p of this.fx) { ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2); }
     ctx.globalAlpha = 1;
-    drawText('YOU BEAT THE BLACK WIDOW!', BW / 2, BH / 2 - 112, 2, '#ffffff', 'center', null, '#140c26');
+    drawText('YOU BEAT THE DADDY LONG LEGS!', BW / 2, BH / 2 - 112, 2, '#ffffff', 'center', null, '#140c26');
     const s = textWidth('NEW LEVELS COMING SOON!', 4) > BW - 20 ? 3 : 4;
     drawText('NEW LEVELS COMING SOON!', BW / 2, BH / 2 - 80, s, '#ffd23f', 'center', '#8a5a00', '#140c26');
     drawStarShape(ctx, BW / 2 - 40, BH / 2 - 20, 12, '#ffd23f', T);

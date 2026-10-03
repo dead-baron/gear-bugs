@@ -17,6 +17,9 @@ const BIOMES = [
   { key: 'barn',   name: 'OLD BARN',        enemy: 'widow',  npc: 'BLACK WIDOW',
     sky: ['#3d2a6b', '#5a3279', '#7d3b7f', '#a3477c', '#c95a6e', '#e8755d', '#f59a52', '#f8be5c'],
     far: ['#d9a640', '#e8bb52'], near: ['#c48a2e', '#d69d3a'], bush: ['#b8862a', '#d6a540'], sun: '#ff9a3c' },
+  { key: 'factory', name: 'GEAR FACTORY', enemy: 'dll', npc: 'DADDY LONG LEGS', boss: true,
+    sky: ['#1c1a28', '#221f30', '#282438', '#2e2940', '#332d46', '#38314a', '#3c344c', '#40374e'],
+    far: ['#2a2638', '#332e44'], near: ['#3a3f4c', '#5c6270'], bush: ['#ffd23f', '#1a1a1a'], sun: '#9ad0ff' },
 ];
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
@@ -65,13 +68,20 @@ function generateLevel(biomeIdx, seed) {
     ground = mkPlat(96, 296, 448, 200, 'sand'); P.push(ground);
     L.water = { y: 330 };
     spawnXs = [150, 490, 250, 390];
-  } else {
+  } else if (biomeIdx === 3) {
     ground = mkPlat(-400, GROUND_Y, 1440, 240, 'dirt'); P.push(ground);
     P.push(mkPlat(-30, -400, 46, 720, 'silo'));
     P.push(mkPlat(624, -400, 120, 720, 'barnwall'));
     P.push(mkPlat(330, 72, 294, 10, 'beam'));
     P.push(mkPlat(330, 82, 12, 170, 'barnwall', { inner: true }));
     L.barn = { x0: 330, x1: 624, y0: 72 };
+  } else {
+    // factory: steel floor, riveted walls and a girder ceiling the spiders can hang from
+    ground = mkPlat(-400, GROUND_Y, 1440, 240, 'floor'); P.push(ground);
+    P.push(mkPlat(-30, -400, 46, 720, 'fwall'));
+    P.push(mkPlat(624, -400, 120, 720, 'fwall'));
+    P.push(mkPlat(-400, -400, 1440, 416, 'ceiling'));
+    L.movers = [];
   }
   const frame = P.slice();
   const gTop = ground.y;
@@ -121,7 +131,7 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 50, 90); return mkPlat(xIn(w, 14, 626), randInt(r, 170, 250), w, 10, 'drift'); }, 2);
     tryPlace(() => { const w = randInt(r, 36, 60), h = randInt(r, 18, 30); const c = mkPlat(xIn(w, 120, 520), gTop - h, w, h, 'beachrock'); c.touch = [ground]; return c; }, 2);
     L.enemySpawn = { x: 470, y: gTop - 10 };
-  } else {
+  } else if (biomeIdx === 3) {
     // exterior (wheat field side): fence rails and floating planks
     tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 300), randInt(r, 215, 262), w, 8, 'fence'); }, 1);
     tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 40, 300), randInt(r, 70, 170), w, 10, 'plank'); }, 2);
@@ -137,20 +147,52 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 346, 618), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 1);
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 60, 300), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
     L.enemySpawn = { x: dropX, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
+  } else {
+    // moving lifts first: their whole travel path stays clear of everything else
+    const placeMover = (make) => {
+      for (let t = 0; t < 120; t++) {
+        const c = make(); if (!c) continue;
+        const m = c.move, sw = { x: Math.min(m.x0, m.x1), y: Math.min(m.y0, m.y1), w: Math.abs(m.x1 - m.x0) + c.w, h: Math.abs(m.y1 - m.y0) + c.h };
+        if (sw.x < 30 || sw.x + sw.w > 610 || sw.y < 44) continue;
+        if (!fits(sw, P, null, M, reserved)) continue;
+        reserved.push({ x: sw.x - 14, y: sw.y - 14, w: sw.w + 28, h: sw.h + 28 });
+        P.push(c); L.movers.push(c); return c;
+      }
+      return null;
+    };
+    placeMover(() => {   // overhead trolley lift gliding side to side
+      const w = randInt(r, 52, 64), x0 = randInt(r, 90, 300), y = randInt(r, 70, 120), span = randInt(r, 120, 170);
+      return mkPlat(x0, y, w, 10, 'lift', { dyn: true, move: { x0, y0: y, x1: x0 + span, y1: y, period: 5 + r() * 1.5, phase: r() }, axis: 'x' });
+    });
+    placeMover(() => {   // elevator going up and down
+      const w = randInt(r, 46, 56), x = pick(r, [randInt(r, 70, 170), randInt(r, 440, 540)]), y1 = randInt(r, 232, 262), y0 = y1 - randInt(r, 100, 130);
+      return mkPlat(x, y0, w, 10, 'lift', { dyn: true, move: { x0: x, y0, x1: x, y1, period: 4.2 + r() * 1.2, phase: r() }, axis: 'y' });
+    });
+    // conveyor belts: one running along the floor, one up in the air on a stand
+    const beltSpeed = () => (r() < 0.5 ? -1 : 1) * randInt(r, 42, 58);
+    tryPlace(() => { const w = randInt(r, 120, 160); const c = mkPlat(xIn(w, 130, 520), gTop - 12, w, 12, 'conveyor', { dyn: true, belt: beltSpeed() }); c.touch = [ground]; return c; }, 1, 160);
+    tryPlace(() => { const w = randInt(r, 96, 136); return mkPlat(xIn(w, 40, 600), randInt(r, 168, 222), w, 12, 'conveyor', { dyn: true, belt: beltSpeed(), stand: true }); }, 1, 160);
+    // steel girders and a metal crate
+    tryPlace(() => { const w = randInt(r, 70, 110); return mkPlat(xIn(w, 40, 600), randInt(r, 56, 140), w, 10, 'girder'); }, 2);
+    tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 150, 240), w, 10, 'girder'); }, 1);
+    tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 100, 560), gTop - s, s, s, 'mcrate'); c.touch = [ground]; return c; }, 1);
+    L.enemySpawn = { x: 470, y: 150 };
   }
   // Guarantee at least two high anchors for rope swinging
-  let high = P.filter(p => !frame.includes(p) && p.y < 160).length;
+  let high = P.filter(p => !frame.includes(p) && p.y < 160 && !p.move).length;
   for (let t = 0; t < 60 && high < 2; t++) {
     const w = randInt(r, 60, 100);
-    const type = biomeIdx === 0 ? 'ledge' : biomeIdx === 1 ? 'leaf' : biomeIdx === 2 ? 'drift' : 'plank';
+    const type = biomeIdx === 0 ? 'ledge' : biomeIdx === 1 ? 'leaf' : biomeIdx === 2 ? 'drift' : biomeIdx === 3 ? 'plank' : 'girder';
     const c = mkPlat(xIn(w, 100, 540), randInt(r, 60, 150), w, 10, type);
     if (fits(c, P, null, M, reserved)) { P.push(c); high++; }
   }
   // Spawn points (on the ground / plateau surface)
   L.spawns = spawnXs.map(x => ({ x, y: gTop - 9 }));
+  if (L.movers) for (const m of L.movers) { m.bx = m.x; m.by = m.y; }
   // Decorative extras
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
+  if (biomeIdx === 4) for (let i = 0; i < 5; i++) L.decor.push({ k: 'lamp', x: 60 + i * 130 + Math.floor(dr() * 30), len: 8 + Math.floor(dr() * 14) });
   if (biomeIdx === 2) for (let i = 0; i < 6; i++) L.decor.push({ k: 'shell', x: 110 + dr() * 420, c: pick(dr, ['#ffb3c1', '#fff3d6', '#ffd29a']) });
   return L;
 }
@@ -166,6 +208,8 @@ function buildLevelArt(L) {
   /* ---- Sky ---- */
   ART.sky = makeCanvas(BW, BH);
   let g = ART.sky.getContext('2d');
+  if (L.biome === 4) { drawFactoryBackdrop(g, L); ART.clouds = []; ART.cloudSprites = []; }
+  else {
   const horizon = OY + (L.biome === 2 ? 240 : 290), bandH = Math.ceil(horizon / B.sky.length);
   B.sky.forEach((c, i) => { g.fillStyle = c; g.fillRect(0, i * bandH, BW, bandH + 1); });
   g.fillStyle = B.sky[B.sky.length - 1]; g.fillRect(0, horizon, BW, BH);
@@ -207,13 +251,14 @@ function buildLevelArt(L) {
   ART.clouds = [];
   const n = Math.max(4, Math.round(BW / 130));
   for (let i = 0; i < n; i++) ART.clouds.push({ x: cr() * BW, y: 8 + cr() * (OY + 110), spr: i % 4, spd: 3 + cr() * 6 });
+  }
 
   /* ---- Scene: hills, structures, platforms ---- */
   ART.scene = makeCanvas(BW, BH);
   g = ART.scene.getContext('2d');
   g.save(); g.translate(OX, OY);
   const xL = -OX - 4, xR = BW - OX + 4;
-  if (L.biome !== 2) {
+  if (L.biome !== 2 && L.biome !== 4) {
     for (let x = Math.floor(xL / 2) * 2; x < xR; x += 2) {
       const y = Math.round(236 + 22 * Math.sin(x * 0.012 + L.biome) + 10 * Math.sin(x * 0.033 + 1));
       g.fillStyle = B.far[0]; g.fillRect(x, y, 2, 330 - y);
@@ -254,8 +299,10 @@ function buildLevelArt(L) {
   }
   if (L.barn) drawBarnBackdrop(g, L);
   // platforms: big frame pieces first, then props
-  for (const p of L.plats) if (p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand') drawPlatform(g, p, L);
-  for (const p of L.plats) if (!(p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand')) drawPlatform(g, p, L);
+  if (L.biome === 4) drawFactoryFixtures(g, L);
+  const big = p => p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand' || p.type === 'floor';
+  for (const p of L.plats) if (big(p)) drawPlatform(g, p, L);
+  for (const p of L.plats) if (!big(p) && !p.dyn) drawPlatform(g, p, L);
   for (const d of L.decor) if (d.k === 'shell') { g.fillStyle = d.c; g.fillRect(Math.round(d.x), 298, 3, 2); g.fillRect(Math.round(d.x) + 1, 297, 1, 1); }
   g.restore();
 }
@@ -499,6 +546,51 @@ function drawPlatform(g, p, L) {
       g.fillStyle = '#d09a5a'; g.fillRect(x + 2, y + 2, w - 4, 1);
       break;
     }
+    case 'floor': {
+      const x0 = -OX - 4, x1 = BW - OX + 4, y0 = p.y, y1 = BH - OY + 4;
+      g.fillStyle = '#3a3f4c'; g.fillRect(x0, y0, x1 - x0, y1 - y0);
+      for (let yy = y0 + 10; yy < y1; yy += 6) for (let xx = x0 + ((yy / 6) % 2) * 4; xx < x1; xx += 8) { g.fillStyle = '#4a505e'; g.fillRect(xx, yy, 3, 1); g.fillRect(xx + 1, yy + 1, 1, 1); }
+      g.fillStyle = '#5c6270'; g.fillRect(x0, y0, x1 - x0, 6); g.fillStyle = '#8a92a2'; g.fillRect(x0, y0, x1 - x0, 1);
+      for (let xx = Math.floor(x0 / 12) * 12; xx < x1; xx += 12) { g.fillStyle = '#ffd23f'; g.fillRect(xx, y0 + 6, 6, 3); g.fillStyle = '#1a1a1a'; g.fillRect(xx + 6, y0 + 6, 6, 3); }
+      for (let xx = Math.floor(x0 / 24) * 24; xx < x1; xx += 24) { g.fillStyle = '#9aa2b0'; g.fillRect(xx + 3, y0 + 2, 1, 1); }
+      break;
+    }
+    case 'fwall': {
+      const yTop = -OY - 4, yBot = 320, left = x < 100, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4;
+      g.fillStyle = '#4a5060'; g.fillRect(xa, yTop, xb - xa, yBot - yTop);
+      for (let yy = Math.floor(yTop / 40) * 40; yy < yBot; yy += 40) { g.fillStyle = '#3a3f4c'; g.fillRect(xa, yy, xb - xa, 2); for (let xx = xa + 4; xx < xb; xx += 10) { g.fillStyle = '#7a8090'; g.fillRect(xx, yy + 5, 2, 2); } }
+      const edge = left ? x + w - 3 : x;
+      g.fillStyle = '#8a92a2'; g.fillRect(edge, yTop, 3, yBot - yTop); g.fillStyle = '#2a2d36'; g.fillRect(left ? edge - 1 : edge + 3, yTop, 1, yBot - yTop);
+      for (let yy = 60; yy < 300; yy += 90) { g.fillStyle = '#ffd23f'; for (let i = 0; i < 4; i++) g.fillRect(left ? edge - 10 + i * 2 : edge + 4 + i * 2, yy + i * 3, 2, 3); }
+      break;
+    }
+    case 'ceiling': {
+      const x0 = -OX - 4, x1 = BW - OX + 4, yb = y + h;
+      g.fillStyle = '#23252e'; g.fillRect(x0, -OY - 4, x1 - x0, yb + OY + 4);
+      g.fillStyle = '#3a3f4c'; g.fillRect(x0, yb - 6, x1 - x0, 6); g.fillStyle = '#5c6270'; g.fillRect(x0, yb - 2, x1 - x0, 2);
+      g.strokeStyle = '#3a3f4c'; g.lineWidth = 2; g.beginPath();
+      for (let xx = Math.floor(x0 / 20) * 20; xx < x1; xx += 20) { g.moveTo(xx, yb - 6); g.lineTo(xx + 10, yb - 16); g.lineTo(xx + 20, yb - 6); }
+      g.stroke();
+      break;
+    }
+    case 'girder': {
+      g.fillStyle = '#8a3418'; g.fillRect(x, y, w, h);
+      g.fillStyle = '#c8502a'; g.fillRect(x, y, w, h - 2);
+      g.fillStyle = '#e8743c'; g.fillRect(x, y, w, 2);
+      g.fillStyle = '#a8401f'; g.fillRect(x, y + 4, w, 1);
+      for (let xx = x + 6; xx < x + w - 4; xx += 12) { g.fillStyle = '#5a200e'; g.fillRect(xx, y + 5, 3, 2); }
+      g.fillStyle = '#f0a070'; g.fillRect(x + 1, y + 1, 1, 1); g.fillRect(x + w - 2, y + 1, 1, 1);
+      break;
+    }
+    case 'mcrate': {
+      g.fillStyle = '#2a2d36'; g.fillRect(x, y, w, h);
+      g.fillStyle = '#6a7480'; g.fillRect(x + 1, y + 1, w - 2, h - 2);
+      g.fillStyle = '#8a94a4'; g.fillRect(x + 1, y + 1, w - 2, 2);
+      g.strokeStyle = '#4a5260'; g.lineWidth = 2; g.beginPath(); g.moveTo(x + 3, y + 3); g.lineTo(x + w - 3, y + h - 3); g.moveTo(x + w - 3, y + 3); g.lineTo(x + 3, y + h - 3); g.stroke();
+      for (const [cx, cy] of [[x + 3, y + 3], [x + w - 4, y + 3], [x + 3, y + h - 4], [x + w - 4, y + h - 4]]) { g.fillStyle = '#b4bcc8'; g.fillRect(cx, cy, 1, 1); }
+      g.fillStyle = '#ffd23f'; g.fillRect(x + 3, y + h - 6, w - 6, 2);
+      break;
+    }
     case 'hay': {
       g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(x + 2, y + h - 2, w, 3);     // ground shadow
       roundRectPx(g, x, y, w, h, 4, '#4a2e0a');                              // dark outline so it reads against the straw
@@ -542,5 +634,116 @@ function drawWheat(L, t, front) {
     ctx.fillStyle = front ? '#f0cf6a' : '#d6a540';
     for (let i = 0; i < 6; i++) { ctx.fillRect(hx - 1, hy - i * 2, 1, 2); ctx.fillRect(hx + 1, hy - i * 2 - 1, 1, 2); }
     ctx.fillRect(hx, hy - 13, 1, 3);
+  }
+}
+
+/* ---------- Factory (level 5) art ---------- */
+function drawFactoryBackdrop(g, L) {
+  g.fillStyle = '#1c1a28'; g.fillRect(0, 0, BW, BH);
+  g.save(); g.translate(OX, OY);
+  const x0 = -OX - 4, x1 = BW - OX + 4, y0 = -OY - 4, y1 = BH - OY + 4;
+  // dark brick back wall
+  for (let yy = Math.floor(y0 / 8) * 8, row = 0; yy < y1; yy += 8, row++) {
+    for (let xx = Math.floor(x0 / 16) * 16 - (row % 2) * 8; xx < x1; xx += 16) {
+      g.fillStyle = ((xx * 7 + yy * 3) & 31) < 6 ? '#2e2a3c' : '#28243a'; g.fillRect(xx, yy, 15, 7);
+    }
+  }
+  // tall factory windows with cool light
+  const wr = rng(L.seed ^ 31);
+  for (let i = 0; i < 4; i++) {
+    const wx = 40 + i * 156 + Math.floor(wr() * 20), wy = 34, ww = 64, wh = 104;
+    g.fillStyle = '#14121c'; g.fillRect(wx - 3, wy - 3, ww + 6, wh + 6);
+    g.fillStyle = '#3b4f78'; g.fillRect(wx, wy, ww, wh);
+    g.fillStyle = '#4c6494'; g.fillRect(wx, wy, ww, wh / 2);
+    g.fillStyle = '#14121c'; for (let k = 1; k < 4; k++) g.fillRect(wx + k * 16, wy, 2, wh); for (let k = 1; k < 5; k++) g.fillRect(wx, wy + k * 21, ww, 2);
+    g.fillStyle = 'rgba(200,220,255,0.18)'; for (let k = 0; k < 6; k++) g.fillRect(wx + 4 + k * 9, wy + 4 + k * 12, 8, 2);
+    if (wr() < 0.6) { g.fillStyle = '#1c1a28'; g.fillRect(wx + 16 * Math.floor(wr() * 4) + 2, wy + 21 * Math.floor(wr() * 5) + 2, 14, 19); }
+    g.globalAlpha = 0.07; g.fillStyle = '#9ad0ff';
+    g.beginPath(); g.moveTo(wx, wy + wh); g.lineTo(wx + ww, wy + wh); g.lineTo(wx + ww + 60, 320); g.lineTo(wx + 30, 320); g.closePath(); g.fill();
+    g.globalAlpha = 1;
+  }
+  // pipes along the wall
+  for (const [py, c1, c2] of [[262, '#4a5a6a', '#7a8ea2'], [284, '#5a4a3a', '#9a7a5a']]) {
+    g.fillStyle = c1; g.fillRect(x0, py, x1 - x0, 7); g.fillStyle = c2; g.fillRect(x0, py + 1, x1 - x0, 2);
+    for (let xx = Math.floor(x0 / 70) * 70 + 20; xx < x1; xx += 70) { g.fillStyle = '#2a2d36'; g.fillRect(xx, py - 1, 4, 9); }
+  }
+  for (const px of [180, 470]) { g.fillStyle = '#4a5a6a'; g.fillRect(px, 140, 7, 122); g.fillStyle = '#7a8ea2'; g.fillRect(px + 1, 140, 2, 122); pxCircle(g, px + 3, 156, 6, '#5c6270'); pxCircle(g, px + 3, 156, 3, '#c43a3a'); }
+  g.restore();
+}
+/* Lamps hanging from the ceiling and the tracks the lifts ride on (cached with the scene) */
+function drawFactoryFixtures(g, L) {
+  for (const d of L.decor) if (d.k === 'lamp') {
+    g.fillStyle = '#1a1a22'; g.fillRect(d.x, 16, 1, d.len);
+    const ly = 16 + d.len;
+    g.fillStyle = '#5c6270'; g.fillRect(d.x - 5, ly, 11, 3); g.fillRect(d.x - 3, ly - 2, 7, 2);
+    g.fillStyle = '#fff3c0'; g.fillRect(d.x - 2, ly + 3, 5, 2);
+    g.globalAlpha = 0.06; g.fillStyle = '#ffe9a0';
+    g.beginPath(); g.moveTo(d.x - 4, ly + 4); g.lineTo(d.x + 5, ly + 4); g.lineTo(d.x + 40, 320); g.lineTo(d.x - 40, 320); g.closePath(); g.fill();
+    g.globalAlpha = 1;
+  }
+  for (const m of L.movers || []) {
+    const mv = m.move;
+    if (m.axis === 'x') {   // ceiling rail
+      g.fillStyle = '#2a2d36'; g.fillRect(mv.x0 + m.w / 2 - 6, 16, mv.x1 - mv.x0 + 12, 4);
+      g.fillStyle = '#7a8090'; g.fillRect(mv.x0 + m.w / 2 - 6, 17, mv.x1 - mv.x0 + 12, 1);
+    } else {                // elevator guide rails down to the floor
+      for (const gx of [m.x - 3, m.x + m.w + 1]) { g.fillStyle = '#2a2d36'; g.fillRect(gx, mv.y0 - 10, 2, GROUND_Y - mv.y0 + 10); g.fillStyle = '#5c6270'; g.fillRect(gx, mv.y0 - 10, 1, GROUND_Y - mv.y0 + 10); }
+    }
+  }
+  for (const p of L.plats) if (p.type === 'conveyor' && p.stand) {   // support stand for a raised belt
+    for (const sx of [p.x + 10, p.x + p.w - 14]) { g.fillStyle = '#2a2d36'; g.fillRect(sx, p.y + p.h, 4, GROUND_Y - p.y - p.h); g.fillStyle = '#5c6270'; g.fillRect(sx + 1, p.y + p.h, 1, GROUND_Y - p.y - p.h); }
+  }
+}
+/* Animated pieces: gears behind the scene, then lifts + conveyors drawn every frame */
+function drawFactoryGears(t) {
+  for (const [gx, gy, rr, sp] of [[110, 210, 34, 0.4], [168, 176, 18, -0.75], [560, 200, 40, -0.3]]) drawGearShape(ctx, gx, gy, rr, t * sp, '#24212f', '#2c2838');
+}
+function drawGearShape(g, cx, cy, rr, ang, c1, c2) {
+  const teeth = Math.max(8, Math.round(rr / 3.5));
+  g.fillStyle = c1; g.beginPath();
+  for (let i = 0; i < teeth * 2; i++) {
+    const a = ang + i * Math.PI / teeth, R = i % 2 ? rr : rr + 5;
+    const a2 = a + Math.PI / teeth;
+    g.lineTo(cx + Math.cos(a) * R, cy + Math.sin(a) * R); g.lineTo(cx + Math.cos(a2 - 0.08) * R, cy + Math.sin(a2 - 0.08) * R);
+  }
+  g.closePath(); g.fill();
+  pxCircle(g, cx, cy, rr * 0.62, c2); pxCircle(g, cx, cy, rr * 0.22, c1);
+  g.fillStyle = c1; for (let k = 0; k < 4; k++) { const a = ang + k * Math.PI / 2; g.fillRect(Math.round(cx + Math.cos(a) * rr * 0.42) - 2, Math.round(cy + Math.sin(a) * rr * 0.42) - 2, 4, 4); }
+}
+function drawDynPlatform(p, t) {
+  const x = Math.round(p.x), y = Math.round(p.y), w = p.w, h = p.h;
+  if (p.type === 'lift') {
+    if (p.axis === 'x') { ctx.fillStyle = '#1a1a22'; ctx.fillRect(x + 6, 20, 1, y - 20); ctx.fillRect(x + w - 7, 20, 1, y - 20); ctx.fillStyle = '#5c6270'; ctx.fillRect(x + w / 2 - 8, 16, 16, 5); }
+    else { ctx.fillStyle = '#2a2d36'; ctx.fillRect(x + w / 2 - 3, y + h, 6, GROUND_Y - y - h); ctx.fillStyle = '#9aa2b0'; ctx.fillRect(x + w / 2 - 2, y + h, 2, GROUND_Y - y - h); }
+    ctx.fillStyle = '#2a2d36'; ctx.fillRect(x, y, w, h);
+    ctx.fillStyle = '#8a94a4'; ctx.fillRect(x + 1, y, w - 2, h - 2);
+    ctx.fillStyle = '#c4ccd8'; ctx.fillRect(x + 1, y, w - 2, 2);
+    for (let xx = x + 2; xx < x + w - 2; xx += 8) { ctx.fillStyle = '#ffd23f'; ctx.fillRect(xx, y + 4, 4, h - 6); ctx.fillStyle = '#1a1a1a'; ctx.fillRect(xx + 4, y + 4, 4, h - 6); }
+    ctx.fillStyle = Math.sin(t * 6) > 0 ? '#ff5a3a' : '#7a2a1a'; ctx.fillRect(x + 2, y + 1, 2, 1); ctx.fillRect(x + w - 4, y + 1, 2, 1);
+    return;
+  }
+  if (p.type === 'conveyor') {
+    const rr = h / 2, off = ((t * p.belt) % 8 + 8) % 8;
+    ctx.fillStyle = '#2a2d36'; ctx.fillRect(x - 1, y, w + 2, h);
+    ctx.fillStyle = '#16171c'; ctx.fillRect(x + 2, y, w - 4, 3); ctx.fillRect(x + 2, y + h - 3, w - 4, 3);
+    ctx.fillStyle = '#5c6270'; ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
+    for (let xx = x + 3 + off; xx < x + w - 3; xx += 8) { ctx.fillStyle = '#4a4e58'; ctx.fillRect(Math.round(xx), y, 3, 3); }
+    for (let xx = x + w - 3 - off; xx > x + 3; xx -= 8) { ctx.fillStyle = '#4a4e58'; ctx.fillRect(Math.round(xx) - 3, y + h - 3, 3, 3); }
+    // direction arrows along the side
+    const dir = Math.sign(p.belt);
+    for (let xx = x + 12; xx < x + w - 12; xx += 22) { ctx.fillStyle = '#ffd23f'; for (let k = 0; k < 3; k++) ctx.fillRect(xx + dir * k, y + 4 + k, 1, h - 8 - k * 2); }
+    for (const ex of [x + rr, x + w - rr]) {
+      pxCircle(ctx, ex, y + rr, rr, '#8a94a4'); pxCircle(ctx, ex, y + rr, rr - 2, '#3a3f4c');
+      const a = t * p.belt / rr; ctx.fillStyle = '#c4ccd8'; ctx.fillRect(Math.round(ex + Math.cos(a) * (rr - 3)), Math.round(y + rr + Math.sin(a) * (rr - 3)), 1, 1);
+    }
+  }
+}
+/* Move lifts to where they are at time t; carry ropes anchored to them */
+function updateMovers(L, t) {
+  if (!L.movers) return;
+  for (const p of L.movers) {
+    const m = p.move, k = 0.5 - 0.5 * Math.cos(TAU * (t / m.period + m.phase));
+    const nx = m.x0 + (m.x1 - m.x0) * k, ny = m.y0 + (m.y1 - m.y0) * k;
+    p.dx = nx - p.x; p.dy = ny - p.y; p.x = nx; p.y = ny;
   }
 }

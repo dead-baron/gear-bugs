@@ -21,7 +21,7 @@ class World {
     this.claimed = new Map();                   // fly id -> time (guest optimistic claims)
     this.ambient = [];
     const ar = rng(this.seed ^ 0x55);
-    const n = this.biome === 3 ? 26 : 4;
+    const n = this.biome >= 3 ? 26 : 4;
     for (let i = 0; i < n; i++) this.ambient.push({ x: ar() * REF_W, y: 40 + ar() * 220, t: ar() * 10, c: pick(ar, ['#ff8cc6', '#ffd23f', '#9ad0ff', '#ffffff']) });
     buildLevelArt(this.L);
   }
@@ -74,6 +74,11 @@ class World {
   /* ---------- simulation step ---------- */
   step(dt, controlsFor) {
     this.time += dt;
+    if (this.L.movers) {
+      updateMovers(this.L, this.time);
+      // ropes anchored to a moving lift travel with it
+      for (const s of this.spiders) if (s.rope && s.rope.plat && s.rope.plat.move) { s.rope.ax += s.rope.plat.dx; s.rope.ay += s.rope.plat.dy; }
+    }
     for (const s of this.spiders) s.update(dt, controlsFor(s), this);
     for (const r of this.remotes.values()) r.update(dt);
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
@@ -93,7 +98,9 @@ class World {
     for (const s of this.spiders) {
       if (!s.alive || s.immobile) continue;
       for (const e of this.enemies) {
-        if (e.alive && e.biteable() && dist(s.x, s.y, e.x, e.y) < s.r + e.r + 4) { if (this.rules.onEnemyBite) this.rules.onEnemyBite(e, s); }
+        if (!e.alive) continue;
+        const can = e.biteCheck ? e.biteCheck(s) : e.biteable() && dist(s.x, s.y, e.x, e.y) < s.r + e.r + 4;
+        if (can && this.rules.onEnemyBite) this.rules.onEnemyBite(e, s);
       }
       if (this.mode === 'vs' && s.powered && this.rules.onPvPBite) {
         for (const o of this.allSpiders()) if (o !== s && o.alive && o.team !== s.team && o.frozenT > 0 && dist(s.x, s.y, o.x, o.y) < s.r + o.r + 3) this.rules.onPvPBite(s, o);
@@ -105,9 +112,10 @@ class World {
       if (!sc.landed) {
         const prevY = sc.y;
         sc.vy = Math.min(sc.vy + G * dt, 400); sc.y += sc.vy * dt;
-        for (const p of PLATS) if (sc.vy > 0 && sc.x >= p.x - 3 && sc.x <= p.x + p.w + 3 && prevY + 9 <= p.y + 1 && sc.y + 9 >= p.y) { sc.y = p.y - 9; sc.landed = true; sc.vy = 0; break; }
+        for (const p of PLATS) if (sc.vy > 0 && sc.x >= p.x - 3 && sc.x <= p.x + p.w + 3 && prevY + 9 <= p.y + 1 + Math.max(0, -(p.dy || 0)) && sc.y + 9 >= p.y) { sc.y = p.y - 9; sc.landed = true; sc.vy = 0; if (p.move) { sc.plat = p; sc.ox = sc.x - p.x; } break; }
         if (sc.y > WATER_Y - 20) { sc.y = WATER_Y - 20; sc.landed = true; sc.vy = 0; }
       }
+      if (sc.plat) { sc.x = sc.plat.x + sc.ox; sc.y = sc.plat.y - 9; }
       for (const s of this.spiders) if (s.alive && sc.t > 0.6 && dist(s.x, s.y, sc.x, sc.y) < s.r + 11) { this.starCoin = null; if (this.rules.onStarCoin) this.rules.onStarCoin(s, sc); break; }
       if (this.starCoin && Math.random() < dt * 12) this.particles.push({ x: sc.x + (Math.random() - 0.5) * 16, y: sc.y + (Math.random() - 0.5) * 16, vx: 0, vy: -15, life: 0.5, max: 0.5, color: '#fff3a0', size: 1, grav: 0 });
     }
@@ -118,7 +126,7 @@ class World {
       p.vy += p.grav * dt; p.x += p.vx * dt; p.y += p.vy * dt;
     }
     for (let i = this.floaters.length - 1; i >= 0; i--) { const f = this.floaters[i]; f.life -= dt; f.y -= 22 * dt; if (f.life <= 0) this.floaters.splice(i, 1); }
-    for (const a of this.ambient) { a.t += dt; if (this.biome === 3) { a.x += Math.sin(a.t * 0.5) * 6 * dt; a.y += Math.cos(a.t * 0.7) * 4 * dt; } else { a.x += Math.cos(a.t * 0.7) * 20 * dt; a.y += Math.sin(a.t * 1.3) * 15 * dt; } a.x = clamp(a.x, 20, 620); a.y = clamp(a.y, 30, 290); }
+    for (const a of this.ambient) { a.t += dt; if (this.biome >= 3) { a.x += Math.sin(a.t * 0.5) * 6 * dt; a.y += Math.cos(a.t * 0.7) * 4 * dt; } else { a.x += Math.cos(a.t * 0.7) * 20 * dt; a.y += Math.sin(a.t * 1.3) * 15 * dt; } a.x = clamp(a.x, 20, 620); a.y = clamp(a.y, 30, 290); }
     for (const [id, t] of this.claimed) if (this.time - t > 3) this.claimed.delete(id);
   }
   updateEnemyShots(dt) {
@@ -148,8 +156,10 @@ class World {
     ctx.translate(sx, sy);
     ctx.drawImage(ART.sky, 0, 0);
     for (const c of ART.clouds) ctx.drawImage(ART.cloudSprites[c.spr], Math.round(c.x), Math.round(c.y));
+    if (this.biome === 4) { ctx.save(); ctx.translate(OX, OY); drawFactoryGears(T); ctx.restore(); }
     ctx.drawImage(ART.scene, 0, 0);
     ctx.translate(OX, OY);
+    for (const p of PLATS) if (p.dyn) drawDynPlatform(p, this.time);
     drawWheat(this.L, T, false);
     this.drawAmbient();
     this.fire.draw();
@@ -189,6 +199,7 @@ class World {
   }
   drawAmbient() {
     for (const a of this.ambient) {
+      if (this.biome === 4) { ctx.globalAlpha = 0.25 + 0.25 * Math.sin(a.t * 2); ctx.fillStyle = '#cfe0ff'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 3) { if (a.x > 330 && a.y > 80) { ctx.globalAlpha = 0.35 + 0.3 * Math.sin(a.t * 2); ctx.fillStyle = '#ffe3a0'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; } continue; }
       if (this.biome === 2) { // seagulls
         const fy = Math.round(a.y * 0.4), fx = Math.round(a.x), w = Math.sin(a.t * 6) > 0 ? 1 : 0;
