@@ -37,7 +37,7 @@ The difficulties are **Easy, Medium, Hard and HELL MODE**. In HELL MODE enemies 
 
 - **Quick Play** puts you in a lobby with other real players (no bots) and keeps searching for more, up to 4. Once a second player arrives, the match starts after 60 seconds, or as soon as everyone presses **START**. Players who join mid-match spectate until the round ends, then play from the next round.
 - **Private Room** lets you host a room with a 4-letter code or an invite link (`?room=CODE`), or play an offline bot match.
-- The modes are **1v1, 2v2 Teams and 4-player Free-For-All**. A match is 5 rounds: Field → Meadow → Island → Barn → Factory. In the Factory round a 4-legged Daddy Long Legs roams the arena: tear off a leg for bonus points, or finish its rolling body for a big score.
+- The modes are **1v1, 2v2 Teams and 4-player Free-For-All**. A match is 6 rounds: Field → Meadow → Island → Barn → Factory → Anthill. In the Factory round a 4-legged Daddy Long Legs roams the arena: tear off a leg for bonus points, or finish its rolling body for a big score. In the Anthill round the first player to 5 flies bursts the nest: squash ants for points and take down the Queen for a big score.
 - The first to 5 flies powers up. A powered web freezes a rival so you can bite them out of the round. Webs fired before you're powered up only slow rivals down.
 - You score points for flies, for taking out each level's creature and for eliminations. After round 4 a leaderboard shows everyone's wins and points.
 

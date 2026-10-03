@@ -55,7 +55,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-03T19:22:23Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-03T19:27:01Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -3336,7 +3336,7 @@ class Ant extends Enemy {
     this.walk = 0; this.wanderSign = Math.random() < 0.5 ? -1 : 1; this.locked = false; this.calmT = 0.8;
     this.attackCD = 0.6; this.jumpCD = 1 + Math.random(); this.stallT = 0; this.base = 30; this.chase = 62; this.lockR = 58;
   }
-  onWeb(W) { this.squash(W, true); return 'kill'; }
+  onWeb(W, S) { this.squash(W, true); if (W.rules.onBeeDown) W.rules.onBeeDown(this, S); return 'kill'; }
   biteable() { return false; }
   squash(W, byWeb) {
     if (!this.alive) return;
@@ -3346,7 +3346,7 @@ class Ant extends Enemy {
   }
   burstColors() { return ['#0c0c10', '#3a3a46', '#ffffff', '#24242c']; }
   update(dt, W) {
-    if (this.mirror) { this.glide(dt); return; }
+    if (this.mirror) { const ox = this.x, oy = this.y; this.glide(dt); this.walk += dist(ox, oy, this.x, this.y); this.locked = this.windup > 0; return; }
     const D = W.D;
     this.attackCD -= dt; this.jumpCD -= dt; this.calmT -= dt;
     if (this.plat && !PLATS.includes(this.plat)) { this.state = 'air'; this.plat = null; }   // buried under the sand
@@ -3355,6 +3355,7 @@ class Ant extends Enemy {
     if (!this.locked && this.calmT <= 0 && t && d < this.lockR * Math.sqrt(D.aggro) && lineOfSight(this.x, this.y, t.x, t.y)) { this.locked = true; this.lockFlash = 0.4; }
     if (this.locked && (d > 160 || !t)) this.locked = false;
     this.lockFlash = Math.max(0, (this.lockFlash || 0) - dt);
+    this.windup = this.locked ? 1 : 0;   // sent to VS guests so their ants glare too
     if (this.state === 'air') crawlerFly(this, dt, null, W);
     else if (!this.tickFrozen(dt, W)) {
       let sign = this.wanderSign, speed = this.base * D.speed;
@@ -3383,6 +3384,7 @@ class Ant extends Enemy {
       W.hurt(t, 'hit', this); this.attackCD = 1.5; this.locked = false; this.calmT = 1.6; this.wanderSign = -(Math.sign(t.x - this.x) || 1);
     }
   }
+  cancelAttacks() {}
   draw(W) {
     if (!this.alive) return;
     drawAnt(this.x, this.y, this.drawAngle, this.facing, this.walk, { angry: this.locked, flash: this.lockFlash > 0, hell: W.D.hell, air: this.state === 'air' });
@@ -3453,8 +3455,17 @@ class Nest extends Enemy {
     burst(W, h.x, h.y, 5, ['#e8b27a', '#c99560'], 50, 0.4, 200, 1);
     this.riseTarget = Math.min(this.maxRise, this.riseTarget + (this.phase === 'calm' ? 1.6 : 0.9));
   }
+  /* VS: the host sends the sand height + phase; guests mirror them */
+  netExtra() { return [Math.round(this.riseTarget * 10), this.phase === 'calm' ? 0 : this.phase === 'swarm' ? 1 : 2, this.mound.tremble ? 1 : 0]; }
+  applyNetExtra(a, W) {
+    this.riseTarget = a[0] / 10;
+    const ph = a[1] === 0 ? 'calm' : a[1] === 1 ? 'swarm' : 'done';
+    if (ph === 'swarm' && this.phase === 'calm') { const h = this.hole(); this.mound.burstT = 1.5; SFX.play('shriek'); shake(0.6, 6); burst(W, h.x, h.y, 50, ['#e8b27a', '#c99560', '#f6e0a8', '#8a5a2a'], 180, 0.9, 260); }
+    this.phase = ph; this.mound.open = ph !== 'calm'; this.mound.tremble = !!a[2];
+  }
   update(dt, W) {
     this.W = W;
+    if (this.mirror) { if (this.mound.burstT > 0) this.mound.burstT -= dt; this.applyRise(dt, W); return; }
     const D = W.D;
     this.t += dt;
     if (this.mound.burstT > 0) this.mound.burstT -= dt;
@@ -3466,7 +3477,7 @@ class Nest extends Enemy {
       if (this.spawnT <= 0) { this.spawnT = interval; if (this.count('ant') < cap) this.emitAnt(W); }
       const best = Math.max(0, ...W.spiders.filter(s => s.alive).map(s => s.flies));
       this.mound.tremble = best >= 4;
-      if (W.spiders.some(s => s.alive && s.powered)) this.burst(W);
+      if (W.allSpiders().some(s => s.alive && s.powered)) this.burst(W);
     } else if (this.phase === 'swarm') {
       this.swarmT += dt;
       const interval = Math.max(0.3, 1.1 - this.swarmT * 0.02) / Math.sqrt(D.aggro);
@@ -3478,9 +3489,15 @@ class Nest extends Enemy {
       this.riseTarget = Math.min(this.maxRise, this.riseTarget + 0.5 * dt);   // the swarm keeps digging
       if (this.queen && !this.queen.alive) this.finish(W);
     } else if (this.phase === 'done') {
-      for (const e of W.enemies) if (e.alive && e.poofT !== undefined) { e.poofT -= dt; if (e.poofT <= 0) { e.alive = false; burst(W, e.x, e.y, 6, ['#e8b27a', '#24242c'], 50, 0.4); } }
+      let left = 0;
+      for (const e of W.enemies) if (e.alive && e.poofT !== undefined) { left++; e.poofT -= dt; if (e.poofT <= 0) { e.alive = false; burst(W, e.x, e.y, 6, ['#e8b27a', '#24242c'], 50, 0.4); } }
+      if (!left && W.mode === 'vs') this.alive = false;   // VS: a fresh nest (and queen) takes over after the respawn delay
     }
-    // the sand creeps up as the colony digs out
+    this.applyRise(dt, W);
+    if (this.phase === 'swarm' && Math.random() < dt * 8) { const h = this.hole(); W.particles.push({ x: h.x + (Math.random() - 0.5) * 14, y: h.y, vx: (Math.random() - 0.5) * 40, vy: -40 - Math.random() * 40, life: 0.6, max: 0.6, color: '#e8c890', size: 1, grav: 120 }); }
+  }
+  /* the sand creeps up as the colony digs out */
+  applyRise(dt, W) {
     const prev = this.rise;
     this.rise = approach(this.rise, this.riseTarget, 7 * dt);
     const dy = -(this.rise - prev);
@@ -3488,7 +3505,6 @@ class Nest extends Enemy {
     this.mound.y = this.mBase - this.rise; this.mound.dy = dy;
     W.L.spawns.forEach((s, i) => { s.y = this.spawnBase[i] - this.rise; });
     if (dy) this.buryCheck(W);
-    if (this.phase === 'swarm' && Math.random() < dt * 8) { const h = this.hole(); W.particles.push({ x: h.x + (Math.random() - 0.5) * 14, y: h.y, vx: (Math.random() - 0.5) * 40, vy: -40 - Math.random() * 40, life: 0.6, max: 0.6, color: '#e8c890', size: 1, grav: 120 }); }
   }
   buryCheck(W) {
     const top = this.ground.y;
@@ -4222,9 +4238,9 @@ const Overworld = {
              hostleft, matched, error, status)
    ===================================================================== */
 const NET = {
-  APP_ID: 'gear-bugs-v2',          // v2: 5-round matches (older builds can't play round 5)
+  APP_ID: 'gear-bugs-v3',          // v3: 6-round matches (older builds can't play the new rounds)
   CODE_CHARS: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',
-  POOL_ROOM: 'quick-match-pool-v2',
+  POOL_ROOM: 'quick-match-pool-v3',
   TRYSTERO_URLS: ['https://cdn.jsdelivr.net/npm/trystero@0.25.4/nostr/+esm', 'https://esm.run/trystero@0.25.4'],
   RELAY_PROBES: ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://nostr.mom'],
 };
@@ -4752,14 +4768,14 @@ const NetTest = {
      applied counts match. Shots replay from sh counters.
    - Positions are normalized 0..1e4 over REF_W x REF_H.
    ===================================================================== */
-const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, elim: 50 };
-const VS_ROUNDS = 5;                  // Field > Meadow > Island > Barn > Factory
+const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, ant: 5, fant: 8, queen: 60, elim: 50 };
+const VS_ROUNDS = 6;                  // Field > Meadow > Island > Barn > Factory > Anthill
 const VS_ROUND_TIME = 100, VS_INTRO = 3.5, VS_RESULT = 5;
 const SLOT_COLORS = [0, 1, 2, 4];
 const TEAM_NAMES = ['RED TEAM', 'BLUE TEAM'], TEAM_COLORS = ['#ff4d5e', '#4da3ff'];
 const nX = x => Math.round(clamp(x, -200, REF_W + 200) / REF_W * 1e4), nY = y => Math.round(clamp(y, -200, REF_H + 200) / REF_H * 1e4);
 const dX = v => v / 1e4 * REF_W, dY = v => v / 1e4 * REF_H;
-const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6 };
+const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6, ant: 7, fant: 8, queen: 9, nest: 10 };
 const VS_DIFF = Object.assign({}, DIFFS[1], { beeMax: 2, freeze: 6 });
 
 const VS = {
@@ -5011,7 +5027,8 @@ const VS = {
     else if (rn === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y, { invulnerable: true }));
     else if (rn === 2) W.enemies.push(new Gecko(320, L.spawns[0].y));
     else if (rn === 3) W.enemies.push(new Widow(L.enemySpawn.x, L.enemySpawn.y, { speedMul: 0.75, plat: L.enemySpawn.plat }));
-    else W.enemies.push(new LongLegs(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF, { legs: 4 }));
+    else if (rn === 4) W.enemies.push(new LongLegs(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF, { legs: 4 }));
+    else W.enemies.push(new Nest(W));     // the first player to 5 flies bursts the nest
   },
   /* seconds since this round's intro began - drives the factory lifts identically for everyone */
   roundClock() { return this.phase === 'intro' ? VS_INTRO - this.phaseT : this.phase === 'play' ? VS_INTRO + VS_ROUND_TIME - this.phaseT : undefined; },
@@ -5047,7 +5064,7 @@ const VS = {
         if (bySlot !== undefined && bySlot >= 0) V.addPts(bySlot, VS_PTS[e.type] || 30, 'npc');
         V.respawns.push({ type: e.type, t: 10 });
       },
-      onBeeDown(bee, S) { if (V.isHost && S && S.slot !== undefined) V.addPts(S.slot, VS_PTS.bee, 'npc'); },
+      onBeeDown(bee, S) { if (V.isHost && S && S.slot !== undefined) V.addPts(S.slot, VS_PTS[bee.type] || VS_PTS.bee, 'npc'); },
       onRemoteHurt(id, kind, src) {
         const r = V.roster.find(x => x.id === id);
         if (!r) return;
@@ -5275,7 +5292,7 @@ const VS = {
       let e = W.enemies.find(q => q.netId === id);
       if (!e) {
         const x = dX(a[2]), y = dY(a[3]);
-        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : new Bee(x, y, null);
+        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : code === 7 ? new Ant(x, y, { vx: 0, vy: 0 }) : code === 8 ? new FlyingAnt(x, y, { x, y }) : code === 9 ? new Queen(x, y) : code === 10 ? new Nest(W) : new Bee(x, y, null);
         e.mirror = true; e.netId = id; e.x = x; e.y = y; W.enemies.push(e);
       }
       e.tx = dX(a[2]); e.ty = dY(a[3]); e.drawAngle = a[4] / 100; e.facing = a[5]; e.frozenT = a[6] / 10;
@@ -5506,7 +5523,7 @@ const VS = {
     else info = 'THE MATCH CAN START ONCE A SECOND PLAYER JOINS';
     drawText(info, BW / 2, y0 + ch + 12, 1, col, 'center', '#140c26');
     if (this.sub === 'wait' && this.autoT >= 0 && this.autoT <= 10) drawText(String(Math.ceil(this.autoT)), BW / 2, y0 + ch + 26, 3, '#ffd23f', 'center', null, '#140c26');
-    drawText('5 ROUNDS: FIELD > MEADOW > ISLAND > BARN > FACTORY.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
+    drawText('6 ROUNDS, FIELD TO ANTHILL.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
     const rep = this.sub === 'wait' && this.net ? this.net.report() : this.searchNet ? this.searchNet.report() : '';
     drawText(rep, BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.quickButtons(), uiSel);
@@ -5566,7 +5583,7 @@ const VS = {
       else info = 'WAITING FOR THE HOST TO START';
       drawText(info, BW / 2, y0 + ch + 10, 1, '#ffffff', 'center', '#140c26');
     }
-    drawText('5 ROUNDS: FIELD > MEADOW > ISLAND > BARN > FACTORY.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
+    drawText('6 ROUNDS, FIELD TO ANTHILL.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
     if (this.net) drawText(this.net.report(), BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.lobbyButtons(), uiSel);
     if (this.msgT > 0) drawText(this.msg, BW / 2, y0 + ch + 38, 1, '#7df06a', 'center', '#140c26');
@@ -5595,7 +5612,7 @@ class BotBrain {
     this.lx = b.x; this.ly = b.y;
     // danger: flee hazards
     let danger = null;
-    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : 50)) danger = e;
+    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && e.type !== 'nest' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : e.type === 'ant' ? 26 : e.type === 'queen' ? 60 : 50)) danger = e;
     const rivals = W.allSpiders().filter(o => o !== b && o.alive && o.team !== b.team);
     let target = null, mode = '';
     if (b.powered) {

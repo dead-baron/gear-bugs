@@ -20,7 +20,7 @@ class Ant extends Enemy {
     this.walk = 0; this.wanderSign = Math.random() < 0.5 ? -1 : 1; this.locked = false; this.calmT = 0.8;
     this.attackCD = 0.6; this.jumpCD = 1 + Math.random(); this.stallT = 0; this.base = 30; this.chase = 62; this.lockR = 58;
   }
-  onWeb(W) { this.squash(W, true); return 'kill'; }
+  onWeb(W, S) { this.squash(W, true); if (W.rules.onBeeDown) W.rules.onBeeDown(this, S); return 'kill'; }
   biteable() { return false; }
   squash(W, byWeb) {
     if (!this.alive) return;
@@ -30,7 +30,7 @@ class Ant extends Enemy {
   }
   burstColors() { return ['#0c0c10', '#3a3a46', '#ffffff', '#24242c']; }
   update(dt, W) {
-    if (this.mirror) { this.glide(dt); return; }
+    if (this.mirror) { const ox = this.x, oy = this.y; this.glide(dt); this.walk += dist(ox, oy, this.x, this.y); this.locked = this.windup > 0; return; }
     const D = W.D;
     this.attackCD -= dt; this.jumpCD -= dt; this.calmT -= dt;
     if (this.plat && !PLATS.includes(this.plat)) { this.state = 'air'; this.plat = null; }   // buried under the sand
@@ -39,6 +39,7 @@ class Ant extends Enemy {
     if (!this.locked && this.calmT <= 0 && t && d < this.lockR * Math.sqrt(D.aggro) && lineOfSight(this.x, this.y, t.x, t.y)) { this.locked = true; this.lockFlash = 0.4; }
     if (this.locked && (d > 160 || !t)) this.locked = false;
     this.lockFlash = Math.max(0, (this.lockFlash || 0) - dt);
+    this.windup = this.locked ? 1 : 0;   // sent to VS guests so their ants glare too
     if (this.state === 'air') crawlerFly(this, dt, null, W);
     else if (!this.tickFrozen(dt, W)) {
       let sign = this.wanderSign, speed = this.base * D.speed;
@@ -67,6 +68,7 @@ class Ant extends Enemy {
       W.hurt(t, 'hit', this); this.attackCD = 1.5; this.locked = false; this.calmT = 1.6; this.wanderSign = -(Math.sign(t.x - this.x) || 1);
     }
   }
+  cancelAttacks() {}
   draw(W) {
     if (!this.alive) return;
     drawAnt(this.x, this.y, this.drawAngle, this.facing, this.walk, { angry: this.locked, flash: this.lockFlash > 0, hell: W.D.hell, air: this.state === 'air' });
@@ -137,8 +139,17 @@ class Nest extends Enemy {
     burst(W, h.x, h.y, 5, ['#e8b27a', '#c99560'], 50, 0.4, 200, 1);
     this.riseTarget = Math.min(this.maxRise, this.riseTarget + (this.phase === 'calm' ? 1.6 : 0.9));
   }
+  /* VS: the host sends the sand height + phase; guests mirror them */
+  netExtra() { return [Math.round(this.riseTarget * 10), this.phase === 'calm' ? 0 : this.phase === 'swarm' ? 1 : 2, this.mound.tremble ? 1 : 0]; }
+  applyNetExtra(a, W) {
+    this.riseTarget = a[0] / 10;
+    const ph = a[1] === 0 ? 'calm' : a[1] === 1 ? 'swarm' : 'done';
+    if (ph === 'swarm' && this.phase === 'calm') { const h = this.hole(); this.mound.burstT = 1.5; SFX.play('shriek'); shake(0.6, 6); burst(W, h.x, h.y, 50, ['#e8b27a', '#c99560', '#f6e0a8', '#8a5a2a'], 180, 0.9, 260); }
+    this.phase = ph; this.mound.open = ph !== 'calm'; this.mound.tremble = !!a[2];
+  }
   update(dt, W) {
     this.W = W;
+    if (this.mirror) { if (this.mound.burstT > 0) this.mound.burstT -= dt; this.applyRise(dt, W); return; }
     const D = W.D;
     this.t += dt;
     if (this.mound.burstT > 0) this.mound.burstT -= dt;
@@ -150,7 +161,7 @@ class Nest extends Enemy {
       if (this.spawnT <= 0) { this.spawnT = interval; if (this.count('ant') < cap) this.emitAnt(W); }
       const best = Math.max(0, ...W.spiders.filter(s => s.alive).map(s => s.flies));
       this.mound.tremble = best >= 4;
-      if (W.spiders.some(s => s.alive && s.powered)) this.burst(W);
+      if (W.allSpiders().some(s => s.alive && s.powered)) this.burst(W);
     } else if (this.phase === 'swarm') {
       this.swarmT += dt;
       const interval = Math.max(0.3, 1.1 - this.swarmT * 0.02) / Math.sqrt(D.aggro);
@@ -162,9 +173,15 @@ class Nest extends Enemy {
       this.riseTarget = Math.min(this.maxRise, this.riseTarget + 0.5 * dt);   // the swarm keeps digging
       if (this.queen && !this.queen.alive) this.finish(W);
     } else if (this.phase === 'done') {
-      for (const e of W.enemies) if (e.alive && e.poofT !== undefined) { e.poofT -= dt; if (e.poofT <= 0) { e.alive = false; burst(W, e.x, e.y, 6, ['#e8b27a', '#24242c'], 50, 0.4); } }
+      let left = 0;
+      for (const e of W.enemies) if (e.alive && e.poofT !== undefined) { left++; e.poofT -= dt; if (e.poofT <= 0) { e.alive = false; burst(W, e.x, e.y, 6, ['#e8b27a', '#24242c'], 50, 0.4); } }
+      if (!left && W.mode === 'vs') this.alive = false;   // VS: a fresh nest (and queen) takes over after the respawn delay
     }
-    // the sand creeps up as the colony digs out
+    this.applyRise(dt, W);
+    if (this.phase === 'swarm' && Math.random() < dt * 8) { const h = this.hole(); W.particles.push({ x: h.x + (Math.random() - 0.5) * 14, y: h.y, vx: (Math.random() - 0.5) * 40, vy: -40 - Math.random() * 40, life: 0.6, max: 0.6, color: '#e8c890', size: 1, grav: 120 }); }
+  }
+  /* the sand creeps up as the colony digs out */
+  applyRise(dt, W) {
     const prev = this.rise;
     this.rise = approach(this.rise, this.riseTarget, 7 * dt);
     const dy = -(this.rise - prev);
@@ -172,7 +189,6 @@ class Nest extends Enemy {
     this.mound.y = this.mBase - this.rise; this.mound.dy = dy;
     W.L.spawns.forEach((s, i) => { s.y = this.spawnBase[i] - this.rise; });
     if (dy) this.buryCheck(W);
-    if (this.phase === 'swarm' && Math.random() < dt * 8) { const h = this.hole(); W.particles.push({ x: h.x + (Math.random() - 0.5) * 14, y: h.y, vx: (Math.random() - 0.5) * 40, vy: -40 - Math.random() * 40, life: 0.6, max: 0.6, color: '#e8c890', size: 1, grav: 120 }); }
   }
   buryCheck(W) {
     const top = this.ground.y;

@@ -10,14 +10,14 @@
      applied counts match. Shots replay from sh counters.
    - Positions are normalized 0..1e4 over REF_W x REF_H.
    ===================================================================== */
-const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, elim: 50 };
-const VS_ROUNDS = 5;                  // Field > Meadow > Island > Barn > Factory
+const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, ant: 5, fant: 8, queen: 60, elim: 50 };
+const VS_ROUNDS = 6;                  // Field > Meadow > Island > Barn > Factory > Anthill
 const VS_ROUND_TIME = 100, VS_INTRO = 3.5, VS_RESULT = 5;
 const SLOT_COLORS = [0, 1, 2, 4];
 const TEAM_NAMES = ['RED TEAM', 'BLUE TEAM'], TEAM_COLORS = ['#ff4d5e', '#4da3ff'];
 const nX = x => Math.round(clamp(x, -200, REF_W + 200) / REF_W * 1e4), nY = y => Math.round(clamp(y, -200, REF_H + 200) / REF_H * 1e4);
 const dX = v => v / 1e4 * REF_W, dY = v => v / 1e4 * REF_H;
-const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6 };
+const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6, ant: 7, fant: 8, queen: 9, nest: 10 };
 const VS_DIFF = Object.assign({}, DIFFS[1], { beeMax: 2, freeze: 6 });
 
 const VS = {
@@ -269,7 +269,8 @@ const VS = {
     else if (rn === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y, { invulnerable: true }));
     else if (rn === 2) W.enemies.push(new Gecko(320, L.spawns[0].y));
     else if (rn === 3) W.enemies.push(new Widow(L.enemySpawn.x, L.enemySpawn.y, { speedMul: 0.75, plat: L.enemySpawn.plat }));
-    else W.enemies.push(new LongLegs(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF, { legs: 4 }));
+    else if (rn === 4) W.enemies.push(new LongLegs(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF, { legs: 4 }));
+    else W.enemies.push(new Nest(W));     // the first player to 5 flies bursts the nest
   },
   /* seconds since this round's intro began - drives the factory lifts identically for everyone */
   roundClock() { return this.phase === 'intro' ? VS_INTRO - this.phaseT : this.phase === 'play' ? VS_INTRO + VS_ROUND_TIME - this.phaseT : undefined; },
@@ -305,7 +306,7 @@ const VS = {
         if (bySlot !== undefined && bySlot >= 0) V.addPts(bySlot, VS_PTS[e.type] || 30, 'npc');
         V.respawns.push({ type: e.type, t: 10 });
       },
-      onBeeDown(bee, S) { if (V.isHost && S && S.slot !== undefined) V.addPts(S.slot, VS_PTS.bee, 'npc'); },
+      onBeeDown(bee, S) { if (V.isHost && S && S.slot !== undefined) V.addPts(S.slot, VS_PTS[bee.type] || VS_PTS.bee, 'npc'); },
       onRemoteHurt(id, kind, src) {
         const r = V.roster.find(x => x.id === id);
         if (!r) return;
@@ -533,7 +534,7 @@ const VS = {
       let e = W.enemies.find(q => q.netId === id);
       if (!e) {
         const x = dX(a[2]), y = dY(a[3]);
-        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : new Bee(x, y, null);
+        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : code === 7 ? new Ant(x, y, { vx: 0, vy: 0 }) : code === 8 ? new FlyingAnt(x, y, { x, y }) : code === 9 ? new Queen(x, y) : code === 10 ? new Nest(W) : new Bee(x, y, null);
         e.mirror = true; e.netId = id; e.x = x; e.y = y; W.enemies.push(e);
       }
       e.tx = dX(a[2]); e.ty = dY(a[3]); e.drawAngle = a[4] / 100; e.facing = a[5]; e.frozenT = a[6] / 10;
@@ -764,7 +765,7 @@ const VS = {
     else info = 'THE MATCH CAN START ONCE A SECOND PLAYER JOINS';
     drawText(info, BW / 2, y0 + ch + 12, 1, col, 'center', '#140c26');
     if (this.sub === 'wait' && this.autoT >= 0 && this.autoT <= 10) drawText(String(Math.ceil(this.autoT)), BW / 2, y0 + ch + 26, 3, '#ffd23f', 'center', null, '#140c26');
-    drawText('5 ROUNDS: FIELD > MEADOW > ISLAND > BARN > FACTORY.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
+    drawText('6 ROUNDS, FIELD TO ANTHILL.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
     const rep = this.sub === 'wait' && this.net ? this.net.report() : this.searchNet ? this.searchNet.report() : '';
     drawText(rep, BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.quickButtons(), uiSel);
@@ -824,7 +825,7 @@ const VS = {
       else info = 'WAITING FOR THE HOST TO START';
       drawText(info, BW / 2, y0 + ch + 10, 1, '#ffffff', 'center', '#140c26');
     }
-    drawText('5 ROUNDS: FIELD > MEADOW > ISLAND > BARN > FACTORY.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
+    drawText('6 ROUNDS, FIELD TO ANTHILL.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
     if (this.net) drawText(this.net.report(), BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.lobbyButtons(), uiSel);
     if (this.msgT > 0) drawText(this.msg, BW / 2, y0 + ch + 38, 1, '#7df06a', 'center', '#140c26');
@@ -853,7 +854,7 @@ class BotBrain {
     this.lx = b.x; this.ly = b.y;
     // danger: flee hazards
     let danger = null;
-    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : 50)) danger = e;
+    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && e.type !== 'nest' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : e.type === 'ant' ? 26 : e.type === 'queen' ? 60 : 50)) danger = e;
     const rivals = W.allSpiders().filter(o => o !== b && o.alive && o.team !== b.team);
     let target = null, mode = '';
     if (b.powered) {
