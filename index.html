@@ -55,7 +55,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-03T19:20:46Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-03T19:22:23Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -3344,7 +3344,7 @@ class Ant extends Enemy {
     burst(W, this.x, this.y, 10, this.burstColors(), 70, 0.45);
     if (byWeb) { SFX.play('beedown'); floater(W, this.x, this.y - 10, 'SPLAT!', '#ffffff'); }
   }
-  burstColors() { return ['#8a2a10', '#c8502a', '#ffffff', '#3a0e06']; }
+  burstColors() { return ['#0c0c10', '#3a3a46', '#ffffff', '#24242c']; }
   update(dt, W) {
     if (this.mirror) { this.glide(dt); return; }
     const D = W.D;
@@ -3399,7 +3399,7 @@ class Queen extends Ant {
   biteable() { return this.frozenT > 0; }
   cancelAttacks() { this.breathT = 0; }
   defeat(W, by) { Enemy.prototype.defeat.call(this, W, by); }
-  burstColors() { return ['#8a2a10', '#ffd23f', '#ff8a00', '#ffffff']; }
+  burstColors() { return ['#0c0c10', '#ffd23f', '#3a3a46', '#ffffff']; }
   update(dt, W) {
     if (this.mirror) { this.glide(dt); return; }
     // she darts around the arena now and then so the fight stays lively
@@ -3478,7 +3478,7 @@ class Nest extends Enemy {
       this.riseTarget = Math.min(this.maxRise, this.riseTarget + 0.5 * dt);   // the swarm keeps digging
       if (this.queen && !this.queen.alive) this.finish(W);
     } else if (this.phase === 'done') {
-      for (const e of W.enemies) if (e.alive && e.poofT !== undefined) { e.poofT -= dt; if (e.poofT <= 0) { e.alive = false; burst(W, e.x, e.y, 6, ['#e8b27a', '#8a2a10'], 50, 0.4); } }
+      for (const e of W.enemies) if (e.alive && e.poofT !== undefined) { e.poofT -= dt; if (e.poofT <= 0) { e.alive = false; burst(W, e.x, e.y, 6, ['#e8b27a', '#24242c'], 50, 0.4); } }
     }
     // the sand creeps up as the colony digs out
     const prev = this.rise;
@@ -3531,7 +3531,7 @@ class Nest extends Enemy {
 function drawAnt(x, y, ang, facing, walk, o) {
   const q = !!o.queen, s = q ? 2 : 1;
   ctx.save(); ctx.translate(Math.round(x + (o.shiver ? Math.sin(T * 60) : 0)), Math.round(y)); ctx.rotate(ang); ctx.scale(facing * s, s);
-  const dark = o.hell ? '#3a0a06' : q ? '#5a1a0a' : '#4a1408', mid = o.hell ? '#8a1a10' : q ? '#a0381a' : '#8a2a10', hi = q ? '#e0703a' : '#c8502a';
+  const dark = '#0c0c10', mid = o.hell ? '#3a1414' : q ? '#2c2c36' : '#24242c', hi = o.hell ? '#8a2a2a' : '#5a5a6a';   // black ants with a glossy sheen
   // legs (drawn under the body), alternating tripod gait
   ctx.fillStyle = dark;
   for (let i = 0; i < 3; i++) {
@@ -3542,7 +3542,8 @@ function drawAnt(x, y, ang, facing, walk, o) {
   // abdomen, thorax, head
   pxEllipse(ctx, -5, -1, q ? 4 : 3, q ? 3 : 2, dark);
   pxEllipse(ctx, -5, -2, q ? 3 : 2, q ? 2 : 1, mid);
-  if (q) { ctx.fillStyle = '#d6a540'; ctx.fillRect(-8, -1, 1, 3); ctx.fillRect(-6, -1, 1, 3); ctx.fillRect(-4, -1, 1, 3); }
+  if (q) { ctx.fillStyle = '#3e3e4a'; ctx.fillRect(-8, -1, 1, 3); ctx.fillRect(-6, -1, 1, 3); ctx.fillRect(-4, -1, 1, 3); }
+  ctx.fillStyle = hi; ctx.fillRect(q ? -7 : -6, -3, 2, 1);
   ctx.fillStyle = dark; ctx.fillRect(-1, -2, 3, 2); ctx.fillStyle = mid; ctx.fillRect(-1, -2, 2, 1);
   pxCircle(ctx, 3, -2, 1.5, dark); ctx.fillStyle = hi; ctx.fillRect(3, -3, 1, 1);
   ctx.fillStyle = o.angry || o.flash ? '#ff3b3b' : '#ffd27a'; ctx.fillRect(4, -2, 1, 1);
