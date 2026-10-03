@@ -79,13 +79,13 @@ class World {
       this.moverT = (this.moverT || 0) + dt;
       if (this.moverTarget !== undefined) { const err = this.moverTarget - this.moverT; if (Math.abs(err) > 1) this.moverT = this.moverTarget; else this.moverT += err * Math.min(1, dt * 3); }
       updateMovers(this.L, this.moverT);
-      // ropes anchored to a moving lift travel with it
-      for (const s of this.spiders) if (s.rope && s.rope.plat && s.rope.plat.move) { s.rope.ax += s.rope.plat.dx; s.rope.ay += s.rope.plat.dy; }
     }
+    // ropes anchored to a moving lift or the rising sand travel with it
+    for (const s of this.spiders) if (s.rope && s.rope.plat && (s.rope.plat.dx || s.rope.plat.dy)) { s.rope.ax += s.rope.plat.dx || 0; s.rope.ay += s.rope.plat.dy || 0; }
     for (const s of this.spiders) s.update(dt, controlsFor(s), this);
     for (const r of this.remotes.values()) r.update(dt);
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
-    for (let i = this.enemies.length - 1; i >= 0; i--) { const e = this.enemies[i]; if (!e.alive && e.type === 'bee') this.enemies.splice(i, 1); }
+    for (let i = this.enemies.length - 1; i >= 0; i--) { const e = this.enemies[i]; if (!e.alive && (e.type === 'bee' || e.type === 'ant' || e.type === 'fant')) this.enemies.splice(i, 1); }
     for (const w of this.webs) w.update(dt, this);
     this.webs = this.webs.filter(w => !w.dead);
     this.updateEnemyShots(dt);
@@ -202,6 +202,7 @@ class World {
   }
   drawAmbient() {
     for (const a of this.ambient) {
+      if (this.biome === 5) { const gx = Math.round(((a.x + this.time * 40 + a.t * 7) % 680) - 20), gy = Math.round(a.y); ctx.globalAlpha = 0.5; ctx.fillStyle = '#fff0c8'; ctx.fillRect(gx, gy, 2, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 4) { ctx.globalAlpha = 0.25 + 0.25 * Math.sin(a.t * 2); ctx.fillStyle = '#cfe0ff'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 3) { if (a.x > 330 && a.y > 80) { ctx.globalAlpha = 0.35 + 0.3 * Math.sin(a.t * 2); ctx.fillStyle = '#ffe3a0'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; } continue; }
       if (this.biome === 2) { // seagulls

@@ -229,14 +229,15 @@ Screens.practice = {
       const bandH = Math.ceil((b.h - 30) / B.sky.length);
       B.sky.forEach((c, k) => { ctx.fillStyle = c; ctx.fillRect(x, y + k * bandH, b.w, bandH); });
       const gy = y + b.h - 30;
-      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
-      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
+      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : b.card === 5 ? '#f2d9a0' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
+      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : b.card === 5 ? '#d9a866' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
       const ex = x + b.w / 2, ey = gy - 8;
       if (b.card === 0) drawLizard(ex, ey + 2, 0, -1, T * 10, Math.sin(T * 2) * 0.2, {});
       else if (b.card === 1) { drawHive(ex, ey - 22, {}); drawBee(ex + 22, ey - 18 + Math.sin(T * 5) * 3, -1, {}); }
       else if (b.card === 2) drawGecko(ex, ey + 2, 0, -1, T * 14, 0, {});
       else if (b.card === 3) drawWidow(ex, ey, 0, -1, T * 10, {});
-      else drawLongLegsPreview(ex, gy, T);
+      else if (b.card === 4) drawLongLegsPreview(ex, gy, T);
+      else { drawMound({ x: ex - 22, y: gy - 6, w: 44, h: 6, open: true }, T); drawAnt(ex + 2, gy - 11, 0, -1, T * 10, { queen: true }); drawAnt(ex - 26, gy - 3, 0, 1, T * 14, {}); drawAnt(ex + 26, gy - 3, 0, -1, T * 12, {}); }
       const nm = (b.card + 1) + '. ' + B.name, npc = B.npc.length * 6 > b.w - 4 ? B.npc.replace('DADDY ', '') : B.npc;
       drawText(nm.length * 6 > b.w - 4 ? (b.card + 1) + '. ' + B.name.split(' ').pop() : nm, ex, gy + 8, 1, '#ffffff', 'center', '#140c26');
       drawText(npc, ex, gy + 18, 1, sel ? '#ffd23f' : '#bba8ff', 'center', '#140c26');
@@ -260,7 +261,7 @@ Screens.options = {
       { label: 'CONTROLS', action: () => setScene('controls') },
       { label: Screens.options.confirmReset ? 'TAP AGAIN TO ERASE' : 'RESET PROGRESS', action: () => {
         if (!Screens.options.confirmReset) { Screens.options.confirmReset = true; return; }
-        save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]]; persist(); Screens.options.confirmReset = false;
+        save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [0, 0, 0, 0].map(() => new Array(NUM_LEVELS).fill(0)); persist(); Screens.options.confirmReset = false;
       } },
       { label: 'BACK', action: () => { Screens.options.confirmReset = false; setScene(optionsReturn); } },
     ];
@@ -450,7 +451,7 @@ Screens.ending = {
     drawMenuBackdrop(); dim(0.55);
     for (const p of this.fx) { ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2); }
     ctx.globalAlpha = 1;
-    drawText('YOU BEAT THE DADDY LONG LEGS!', BW / 2, BH / 2 - 112, 2, '#ffffff', 'center', null, '#140c26');
+    drawText('YOU BEAT THE ' + BIOMES[NUM_LEVELS - 1].npc + '!', BW / 2, BH / 2 - 112, 2, '#ffffff', 'center', null, '#140c26');
     const s = textWidth('NEW LEVELS COMING SOON!', 4) > BW - 20 ? 3 : 4;
     drawText('NEW LEVELS COMING SOON!', BW / 2, BH / 2 - 80, s, '#ffd23f', 'center', '#8a5a00', '#140c26');
     drawStarShape(ctx, BW / 2 - 40, BH / 2 - 20, 12, '#ffd23f', T);

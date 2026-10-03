@@ -18,11 +18,13 @@ const Campaign = {
     else if (level === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y));
     else if (level === 2) W.enemies.push(new Gecko(es.x, es.y));
     else if (level === 3) W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
-    else W.enemies.push(new LongLegs(es.x, es.y, W.D));
+    else if (level === 4) W.enemies.push(new LongLegs(es.x, es.y, W.D));
+    else W.enemies.push(new Nest(W));          // the queen arrives when the nest bursts
     this.boss = W.enemies[0];
     for (let i = 0; i < 2; i++) W.spawnFly();
     const B = BIOMES[level];
-    this.banner = B.boss ? { text: 'BOSS: ' + B.npc, sub: 'GET 5 FLIES, THEN WEB ITS LEGS AND BITE THEM OFF', t: 3.4, max: 3.4, color: '#ff8c42' }
+    if (level === 5) this.banner = { text: 'LEVEL 6: ' + B.name, sub: 'CATCH 5 FLIES - THEN THE NEST BURSTS! TAKE DOWN THE QUEEN', t: 3.4, max: 3.4, color: '#ffd23f' };
+    else this.banner = B.boss ? { text: 'BOSS: ' + B.npc, sub: 'GET 5 FLIES, THEN WEB ITS LEGS AND BITE THEM OFF', t: 3.4, max: 3.4, color: '#ff8c42' }
                          : { text: 'LEVEL ' + (level + 1) + ': ' + B.name, sub: 'CATCH 5 GOLDEN FLIES, THEN TAKE DOWN THE ' + B.npc, t: 3, max: 3, color: '#ffd23f' };
     track('game_start', { mode: 'campaign', level: level + 1, difficulty: DIFFS[diff].name });
   },
@@ -45,6 +47,10 @@ const Campaign = {
       onEnemyTrapped(e) {
         if (e.type === 'dll') { C.banner = e.phase === 'legs' ? { text: 'LEG WEBBED!', sub: 'BITE IT TO TEAR IT OFF!', t: 1.6, max: 1.6, color: '#ffffff' } : { text: 'BODY WEBBED!', sub: 'BITE IT!', t: 1.6, max: 1.6, color: '#ffffff' }; return; }
         C.banner = { text: e.type === 'hive' ? 'HIVE WEBBED!' : BIOMES[C.level].npc + ' STUCK!', sub: 'CRAWL OVER AND BITE IT!', t: 1.8, max: 1.8, color: '#ffffff' };
+      },
+      onBossSpawn(q) {
+        C.boss = q;
+        C.banner = { text: 'THE NEST BURST!', sub: 'WEB THE QUEEN ANT (CROWN), THEN BITE HER!', t: 2.8, max: 2.8, color: '#ff8c42' };
       },
       onBossPhase(e, what) {
         if (what === 'ball') C.banner = { text: 'ALL LEGS GONE!', sub: 'THE BODY IS ROLLING - WEB IT, THEN BITE IT!', t: 2.6, max: 2.6, color: '#ff8c42' };
@@ -125,6 +131,10 @@ const Campaign = {
     if (this.phase === 'won') return ['LEVEL CLEAR!', '#7df06a'];
     if (this.W.starCoin) return ['GRAB THE STAR COIN!', '#ffd23f'];
     if (me.stunT > 0) return ['WEBBED! MASH BUTTONS TO BREAK FREE!', Math.floor(T * 6) % 2 ? '#ffffff' : '#ff5a7a'];
+    if (boss.type === 'nest') {
+      if (me.flies >= 3) return ['CAREFUL - THE NEST BURSTS AT 5 FLIES!', Math.floor(T * 4) % 2 ? '#ff8c42' : '#ffffff'];
+      return ['CATCH 5 GOLDEN FLIES - DODGE THE ANTS', '#ffffff'];
+    }
     if (boss.type === 'dll') {
       const blink = Math.floor(T * 5) % 2 ? '#ffffff' : '#ffd23f';
       if (boss.phase === 'legs') {
@@ -195,6 +205,7 @@ const Overworld = {
     { x: 400, y: 236, biome: 2 },
     { x: 548, y: 122, biome: 3 },
     { x: 560, y: 272, biome: 4 },
+    { x: 300, y: 296, biome: 5 },
   ],
   cur: 0, tok: { x: 92, y: 262 }, walk: null, unlockAnim: null, map: null, mapKey: '', fog: null, puffs: [],
   enter(fromLevel, newUnlock) {
@@ -284,6 +295,12 @@ const Overworld = {
     g.fillStyle = '#9ad0ff'; g.fillRect(582, 250, 4, 4); g.fillRect(592, 250, 4, 4); g.fillRect(602, 250, 4, 4);
     g.fillStyle = '#5c6270'; g.fillRect(612, 218, 7, 46); g.fillStyle = '#c43a3a'; g.fillRect(612, 222, 7, 2);
     pxCircle(g, 616, 210, 5, '#b4bcc8'); pxCircle(g, 621, 202, 4, '#c8ccd4');
+    // desert: sand dunes, a mesa and the ant hill
+    pxCircle(g, 300, 296, 44, '#e8c27a'); pxCircle(g, 300, 296, 34, '#f2d9a0');
+    g.fillStyle = '#b8743f'; g.fillRect(262, 262, 22, 18); g.fillStyle = '#c98a52'; g.fillRect(262, 262, 22, 3);
+    for (let i = 0; i < 8; i++) { g.fillStyle = '#c99560'; g.fillRect(318 - i * 2, 290 + i, 8 + i * 4, 1); }
+    pxEllipse(g, 326, 290, 3, 1, '#1a0e06');
+    g.fillStyle = '#8a8a3a'; g.fillRect(338, 274, 2, 12); g.fillRect(335, 278, 2, 4); g.fillRect(341, 276, 2, 4);
     // paths
     for (let i = 0; i < this.nodes.length - 1; i++) {
       for (let k = 0; k <= 1.0001; k += 0.04) { const p = this.pathPoint(i, i + 1, k); g.fillStyle = '#5a3a1f'; g.fillRect(Math.round(p.x) - 2, Math.round(p.y) - 1, 4, 4); g.fillStyle = '#f3e3b0'; g.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 1, 2, 2); }

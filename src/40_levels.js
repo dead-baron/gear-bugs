@@ -20,6 +20,9 @@ const BIOMES = [
   { key: 'factory', name: 'GEAR FACTORY', enemy: 'dll', npc: 'DADDY LONG LEGS', boss: true,
     sky: ['#1c1a28', '#221f30', '#282438', '#2e2940', '#332d46', '#38314a', '#3c344c', '#40374e'],
     far: ['#2a2638', '#332e44'], near: ['#3a3f4c', '#5c6270'], bush: ['#ffd23f', '#1a1a1a'], sun: '#9ad0ff' },
+  { key: 'desert', name: 'DESERT ANTHILL', enemy: 'queen', npc: 'QUEEN ANT',
+    sky: ['#3f8fd6', '#55a0dc', '#6eb1e0', '#8bc0df', '#a9cbd8', '#c8d2c8', '#e2d6b2', '#f2d9a0'],
+    far: ['#d9a06a', '#e8b27a'], near: ['#c98a52', '#dba062'], bush: ['#9a8a4a', '#b8a860'], sun: '#fff1b0' },
 ];
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
@@ -75,13 +78,18 @@ function generateLevel(biomeIdx, seed) {
     P.push(mkPlat(330, 72, 294, 10, 'beam'));
     P.push(mkPlat(330, 82, 12, 170, 'barnwall', { inner: true }));
     L.barn = { x0: 330, x1: 624, y0: 72 };
-  } else {
+  } else if (biomeIdx === 4) {
     // factory: steel floor, riveted walls and a girder ceiling the spiders can hang from
     ground = mkPlat(-400, GROUND_Y, 1440, 240, 'floor'); P.push(ground);
     P.push(mkPlat(-30, -400, 46, 720, 'fwall'));
     P.push(mkPlat(624, -400, 120, 720, 'fwall'));
     P.push(mkPlat(-400, -400, 1440, 416, 'ceiling'));
     L.movers = [];
+  } else {
+    // desert: rising sand floor between two sandstone mesas
+    ground = mkPlat(-400, GROUND_Y, 1440, 240, 'sand2', { dyn: true, rising: true }); P.push(ground);
+    P.push(mkPlat(-30, -400, 46, 720, 'mesa'));
+    P.push(mkPlat(624, -400, 120, 720, 'mesa'));
   }
   const frame = P.slice();
   const gTop = ground.y;
@@ -147,7 +155,7 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 346, 618), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 1);
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 60, 300), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
     L.enemySpawn = { x: dropX, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
-  } else {
+  } else if (biomeIdx === 4) {
     // moving lifts first: their whole travel path stays clear of everything else
     const placeMover = (make) => {
       for (let t = 0; t < 120; t++) {
@@ -177,12 +185,24 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 150, 240), w, 10, 'girder'); }, 1);
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 100, 560), gTop - s, s, s, 'mcrate'); c.touch = [ground]; return c; }, 1);
     L.enemySpawn = { x: 470, y: 150 };
+  } else {
+    // the ant hill mound sits on the sand; its hole is where the colony pours out
+    const mw = randInt(r, 92, 112), mx = randInt(r, 250, 390 - mw / 2);
+    const mound = mkPlat(mx, gTop - 16, mw, 16, 'mound', { dyn: true, rising: true }); P.push(mound);
+    L.mound = mound;
+    reserved.push({ x: mx - 30, y: 150, w: mw + 60, h: gTop - 150 });   // keep the space above the nest clear
+    tryPlace(() => { const w = randInt(r, 70, 120); return mkPlat(xIn(w, 30, 610), randInt(r, 52, 120), w, randInt(r, 12, 14), 'sandstone'); }, 3);
+    tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 30, 610), randInt(r, 132, 200), w, randInt(r, 12, 14), 'sandstone'); }, 2);
+    tryPlace(() => { const w = randInt(r, 40, 64), h = randInt(r, 26, 44); const c = mkPlat(xIn(w, 60, 580), gTop - h, w, h, 'drock', { buriable: true }); c.touch = [ground]; return c; }, 2);
+    tryPlace(() => { const w = randInt(r, 64, 90); const c = mkPlat(16, randInt(r, 140, 210), w, 12, 'sandstone'); c.touch = [P[1]]; return c; }, 1);
+    tryPlace(() => { const w = randInt(r, 64, 90); const c = mkPlat(624 - w, randInt(r, 140, 210), w, 12, 'sandstone'); c.touch = [P[2]]; return c; }, 1);
+    L.enemySpawn = { x: mx + mw / 2, y: gTop - 18 };
   }
   // Guarantee at least two high anchors for rope swinging
   let high = P.filter(p => !frame.includes(p) && p.y < 160 && !p.move).length;
   for (let t = 0; t < 60 && high < 2; t++) {
     const w = randInt(r, 60, 100);
-    const type = biomeIdx === 0 ? 'ledge' : biomeIdx === 1 ? 'leaf' : biomeIdx === 2 ? 'drift' : biomeIdx === 3 ? 'plank' : 'girder';
+    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone'][biomeIdx];
     const c = mkPlat(xIn(w, 100, 540), randInt(r, 60, 150), w, 10, type);
     if (fits(c, P, null, M, reserved)) { P.push(c); high++; }
   }
@@ -192,6 +212,7 @@ function generateLevel(biomeIdx, seed) {
   // Decorative extras
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
+  if (biomeIdx === 5) { for (let i = 0; i < 260; i++) L.decor.push({ k: 'grain', x: -60 + dr() * 760, y: 150 + dr() * 260, c: dr() < 0.5 ? '#c99a5a' : '#f6e0a8' }); }
   if (biomeIdx === 4) for (let i = 0; i < 5; i++) L.decor.push({ k: 'lamp', x: 60 + i * 130 + Math.floor(dr() * 30), len: 8 + Math.floor(dr() * 14) });
   if (biomeIdx === 2) for (let i = 0; i < 6; i++) L.decor.push({ k: 'shell', x: 110 + dr() * 420, c: pick(dr, ['#ffb3c1', '#fff3d6', '#ffd29a']) });
   return L;
@@ -268,6 +289,10 @@ function buildLevelArt(L) {
     for (let x = xL + 20; x < xR; x += 70 + Math.floor(tr() * 50)) {
       const base = Math.round(236 + 22 * Math.sin(x * 0.012 + L.biome) + 10 * Math.sin(x * 0.033 + 1)) + 4;
       const th = 14 + Math.floor(tr() * 10);
+      if (L.biome === 5) { // distant saguaro cacti
+        g.fillStyle = '#9a8a4a'; g.fillRect(x, base - th - 6, 3, th + 6); g.fillRect(x - 4, base - th + 2, 2, 6); g.fillRect(x - 4, base - th + 7, 4, 2); g.fillRect(x + 5, base - th - 1, 2, 6); g.fillRect(x + 3, base - th + 4, 3, 2);
+        continue;
+      }
       if (L.biome === 3) { // distant farmhouse silhouettes / haystacks
         pxEllipse(g, x, base, 8, 6, '#b07a25'); pxEllipse(g, x, base - 2, 6, 4, '#c99236');
         continue;
@@ -301,7 +326,7 @@ function buildLevelArt(L) {
   // platforms: big frame pieces first, then props
   if (L.biome === 4) drawFactoryFixtures(g, L);
   const big = p => p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand' || p.type === 'floor';
-  for (const p of L.plats) if (big(p)) drawPlatform(g, p, L);
+  for (const p of L.plats) if (big(p) && !p.dyn) drawPlatform(g, p, L);
   for (const p of L.plats) if (!big(p) && !p.dyn) drawPlatform(g, p, L);
   for (const d of L.decor) if (d.k === 'shell') { g.fillStyle = d.c; g.fillRect(Math.round(d.x), 298, 3, 2); g.fillRect(Math.round(d.x) + 1, 297, 1, 1); }
   g.restore();
@@ -573,6 +598,26 @@ function drawPlatform(g, p, L) {
       g.stroke();
       break;
     }
+    case 'mesa': {
+      const yTop = -OY - 4, yBot = 330, left = x < 100, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4;
+      g.fillStyle = '#b8743f'; g.fillRect(xa, yTop, xb - xa, yBot - yTop);
+      for (let yy = yTop + (r() * 10 | 0), k = 0; yy < yBot; yy += 9 + Math.floor(r() * 9), k++) { g.fillStyle = k % 2 ? '#c98a52' : '#a8663a'; g.fillRect(xa, yy, xb - xa, 3 + Math.floor(r() * 3)); }
+      for (let i = 0; i < 50; i++) { g.fillStyle = '#8a4e2a'; g.fillRect(xa + Math.floor(r() * (xb - xa)), yTop + Math.floor(r() * (yBot - yTop)), 1, 3 + Math.floor(r() * 6)); }
+      const edge = left ? x + w - 3 : x;
+      g.fillStyle = '#e8a870'; g.fillRect(edge, yTop, 2, yBot - yTop); g.fillStyle = '#7a3e1e'; g.fillRect(left ? edge - 1 : edge + 2, yTop, 1, yBot - yTop);
+      break;
+    }
+    case 'sandstone': case 'drock': {
+      const rock = p.type === 'drock';
+      roundRectPx(g, x, y, w, h, rock ? 6 : 3, '#8a4e2a');
+      roundRectPx(g, x, y, w, h - 2, rock ? 6 : 3, rock ? '#b07a4a' : '#c98a52');
+      g.fillStyle = rock ? '#c99a6a' : '#e8b27a'; g.fillRect(x + 3, y + 1, w - 6, 2);
+      for (let yy = y + 5; yy < y + h - 3; yy += 4) { g.fillStyle = '#a8663a'; g.fillRect(x + 2, yy, w - 4, 1); }
+      for (let i = 0; i < w * h / 40; i++) { g.fillStyle = r() < 0.5 ? '#8a4e2a' : '#f0c890'; g.fillRect(x + 2 + Math.floor(r() * (w - 4)), y + 3 + Math.floor(r() * Math.max(1, h - 5)), 1, 1); }
+      g.fillStyle = '#f2d9a0'; g.fillRect(x + 4, y - 1, w - 8, 1);
+      if (!rock) for (let xx = x + 5; xx < x + w - 4; xx += 7 + Math.floor(r() * 6)) { g.fillStyle = '#8a4e2a'; g.fillRect(xx, y + h, 1, 1 + Math.floor(r() * 4)); }
+      break;
+    }
     case 'girder': {
       g.fillStyle = '#8a3418'; g.fillRect(x, y, w, h);
       g.fillStyle = '#c8502a'; g.fillRect(x, y, w, h - 2);
@@ -712,6 +757,8 @@ function drawGearShape(g, cx, cy, rr, ang, c1, c2) {
 }
 function drawDynPlatform(p, t) {
   const x = Math.round(p.x), y = Math.round(p.y), w = p.w, h = p.h;
+  if (p.type === 'sand2') { drawRisingSand(p, t); return; }
+  if (p.type === 'mound') { drawMound(p, t); return; }
   if (p.type === 'lift') {
     if (p.axis === 'x') { ctx.fillStyle = '#1a1a22'; ctx.fillRect(x + 6, 20, 1, y - 20); ctx.fillRect(x + w - 7, 20, 1, y - 20); ctx.fillStyle = '#5c6270'; ctx.fillRect(x + w / 2 - 8, 16, 16, 5); }
     else { ctx.fillStyle = '#2a2d36'; ctx.fillRect(x + w / 2 - 3, y + h, 6, GROUND_Y - y - h); ctx.fillStyle = '#9aa2b0'; ctx.fillRect(x + w / 2 - 2, y + h, 2, GROUND_Y - y - h); }
@@ -746,4 +793,33 @@ function updateMovers(L, t) {
     const nx = m.x0 + (m.x1 - m.x0) * k, ny = m.y0 + (m.y1 - m.y0) * k;
     p.dx = nx - p.x; p.dy = ny - p.y; p.x = nx; p.y = ny;
   }
+}
+
+/* ---------- Desert (level 6): rising sand + the ant hill ---------- */
+function drawRisingSand(p, t) {
+  const L = ART.level, x0 = -OX - 4, x1 = BW - OX + 4, y0 = Math.round(p.y), y1 = BH - OY + 4;
+  ctx.fillStyle = '#d9a866'; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.fillStyle = '#c99a5a'; for (let yy = y0 + 14; yy < y1; yy += 12) ctx.fillRect(x0, yy, x1 - x0, 2);
+  if (L) for (const d of L.decor) if (d.k === 'grain' && d.y > y0 + 4) { ctx.fillStyle = d.c; ctx.fillRect(Math.round(d.x), Math.round(d.y), 2, 1); }
+  // rippled top edge, drifting slowly
+  for (let x = Math.floor(x0 / 2) * 2; x < x1; x += 2) {
+    const hh = Math.round(Math.sin(x * 0.05 + t * 0.6) * 1.2 + Math.sin(x * 0.013) * 1.5);
+    ctx.fillStyle = '#f2d9a0'; ctx.fillRect(x, y0 - 1 + hh, 2, 3);
+    ctx.fillStyle = '#fff0c8'; ctx.fillRect(x, y0 - 1 + hh, 2, 1);
+  }
+}
+function drawMound(p, t) {
+  const x = p.x, y = p.y, w = p.w, h = p.h, cx = x + w / 2, burst = p.burstT || 0;
+  const sh = burst > 0 ? Math.round(Math.sin(t * 50) * Math.min(2, burst)) : (p.tremble ? Math.round(Math.sin(t * 40)) : 0);
+  // hill: stacked rows narrowing to the top, wider than the collision box at the base
+  for (let i = 0; i < h + 6; i++) {
+    const k = i / (h + 6), half = (w / 2 + 14) * (0.35 + 0.65 * k);
+    ctx.fillStyle = i < 2 ? '#e8b27a' : i % 4 === 0 ? '#b8834a' : '#c99560';
+    ctx.fillRect(Math.round(cx - half + sh), Math.round(y + i), Math.round(half * 2), 1);
+  }
+  for (let i = 0; i < 18; i++) { const a = (i * 2.4) % 1, b = (i * 0.37) % 1; ctx.fillStyle = i % 2 ? '#a8733e' : '#e2b27a'; ctx.fillRect(Math.round(cx + (a - 0.5) * w * 0.9 + sh), Math.round(y + 3 + b * h), 2, 1); }
+  // the nest hole
+  const hr = burst > 0 || p.open ? 9 : 6;
+  pxEllipse(ctx, cx + sh, y + 1, hr + 2, 3, '#8a5a2a');
+  pxEllipse(ctx, cx + sh, y + 1, hr, 2, '#1a0e06');
 }

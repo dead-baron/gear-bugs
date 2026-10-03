@@ -163,11 +163,11 @@ const DIFFS = [
 
 /* ---------- Persistent save data ---------- */
 const SAVE_KEY = 'gearbugs_v2';
-const NUM_LEVELS = 5;                 // Field, Meadow, Island, Barn, Factory
+const NUM_LEVELS = 6;                 // Field, Meadow, Island, Barn, Factory, Desert Anthill
 const save = {
   stars: 0,                                    // star coin inventory tally (permanent)
   unlocked: [1, 1, 1, 1],                      // levels unlocked per difficulty
-  cleared: [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+  cleared: [0, 0, 0, 0].map(() => new Array(6).fill(0)),
   style: { c: 0, h: 0, p: 0 },                 // spider customization
   diff: 1,
   settings: { sound: true, shake: true, aim: true, autoFull: true },
@@ -177,9 +177,9 @@ try {
   const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
   if (s && typeof s === 'object') {
     if (typeof s.stars === 'number') save.stars = s.stars;
-    // saves from the 4-level version grow to 5 levels; beating the Barn there opens the Factory
+    // older saves had fewer levels: pad them, and having beaten the old final level opens the next one
     if (Array.isArray(s.cleared) && s.cleared.length === 4) save.cleared = s.cleared.map(r => { const a = Array.isArray(r) ? r.slice(0, NUM_LEVELS).map(v => v ? 1 : 0) : []; while (a.length < NUM_LEVELS) a.push(0); return a; });
-    if (Array.isArray(s.unlocked) && s.unlocked.length === 4) save.unlocked = s.unlocked.map((v, d) => clamp(Math.max(v | 0, save.cleared[d][3] ? 5 : 0), 1, NUM_LEVELS));
+    if (Array.isArray(s.unlocked) && s.unlocked.length === 4) save.unlocked = s.unlocked.map((v, d) => { let u = v | 0; while (u < NUM_LEVELS && save.cleared[d][u - 1]) u++; return clamp(u, 1, NUM_LEVELS); });
     if (s.style) save.style = { c: s.style.c | 0, h: s.style.h | 0, p: s.style.p | 0 };
     if (typeof s.diff === 'number') save.diff = clamp(s.diff | 0, 0, 3);
     if (s.settings) Object.assign(save.settings, s.settings);

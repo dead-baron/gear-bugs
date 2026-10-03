@@ -891,17 +891,17 @@ class Bee extends Enemy {
       if (platAt(this.x, this.y + 3) || this.y > REF_H + 10 || this.y >= WATER_Y) { this.alive = false; burst(W, this.x, this.y, 6, ['#ffcf2a', '#1a1a1a', '#ffffff'], 50, 0.4); }
       return;
     }
-    const D = W.D, spd = 78 * D.speed;
+    const D = W.D, spd = (this.spd || 78) * D.speed;
     let tx, ty, acc = 260;
     const t = W.nearestTarget(this.x, this.y);
-    const sees = t && dist(this.x, this.y, t.x, t.y) < 230 && lineOfSight(this.x, this.y, t.x, t.y);
+    const sees = t && dist(this.x, this.y, t.x, t.y) < (this.seeR || 230) && lineOfSight(this.x, this.y, t.x, t.y);
     if (this.state === 'retreat') { if (this.stateT <= 0) { this.state = 'hover'; this.stateT = 1.1; } }
     else if (this.state === 'hover') { this.vx *= 0.9; this.vy *= 0.9; if (this.stateT <= 0) this.state = 'patrol'; }
     else if (sees) { this.state = 'chase'; this.lastSeen = { x: t.x, y: t.y }; this.lostT = 0; tx = t.x; ty = t.y; acc = 300 * Math.min(1.6, D.aggro); }
     else if (this.state === 'chase' && this.lastSeen && this.lostT < 1.5) { this.lostT += dt; tx = this.lastSeen.x; ty = this.lastSeen.y; }
     else { this.state = 'patrol'; }
     if (this.state === 'patrol') {
-      const h = this.hive && this.hive.alive ? this.hive : { x: 320, y: 120 };
+      const h = this.home || (this.hive && this.hive.alive ? this.hive : { x: 320, y: 120 });
       tx = h.x + Math.cos(this.t * 0.8 + this.phase) * 60; ty = h.y + 10 + Math.sin(this.t * 1.1 + this.phase) * 34;
       acc = 160;
     }

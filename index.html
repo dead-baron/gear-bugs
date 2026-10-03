@@ -39,10 +39,11 @@
      10_audio     Web Audio synthesized arcade SFX
      20_input     keyboard / mouse / touch / gamepad, unified actions
      30_geometry  platforms, 360-degree perimeter crawling math, LOS
-     40_levels    5 biomes, seeded level generator, cached art layers
+     40_levels    6 biomes, seeded level generator, cached art layers
      50_sprites   procedural pixel sprites (spiders, enemies, items)
      60_entities  spider physics + ropes, webs, flies, enemies, fire
      65_longlegs  level 5 boss: robot daddy long legs + rolling body
+     66_ants      level 6: ant colony nest, ants, flying ants, queen
      70_world     World container shared by campaign and VS
      75_campaign  campaign rules, overworld map, fog of war
      80_net       Trystero/WebRTC networking per the multiplayer spec
@@ -54,7 +55,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-03T18:50:36Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-03T19:20:46Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -216,11 +217,11 @@ const DIFFS = [
 
 /* ---------- Persistent save data ---------- */
 const SAVE_KEY = 'gearbugs_v2';
-const NUM_LEVELS = 5;                 // Field, Meadow, Island, Barn, Factory
+const NUM_LEVELS = 6;                 // Field, Meadow, Island, Barn, Factory, Desert Anthill
 const save = {
   stars: 0,                                    // star coin inventory tally (permanent)
   unlocked: [1, 1, 1, 1],                      // levels unlocked per difficulty
-  cleared: [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+  cleared: [0, 0, 0, 0].map(() => new Array(6).fill(0)),
   style: { c: 0, h: 0, p: 0 },                 // spider customization
   diff: 1,
   settings: { sound: true, shake: true, aim: true, autoFull: true },
@@ -230,9 +231,9 @@ try {
   const s = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
   if (s && typeof s === 'object') {
     if (typeof s.stars === 'number') save.stars = s.stars;
-    // saves from the 4-level version grow to 5 levels; beating the Barn there opens the Factory
+    // older saves had fewer levels: pad them, and having beaten the old final level opens the next one
     if (Array.isArray(s.cleared) && s.cleared.length === 4) save.cleared = s.cleared.map(r => { const a = Array.isArray(r) ? r.slice(0, NUM_LEVELS).map(v => v ? 1 : 0) : []; while (a.length < NUM_LEVELS) a.push(0); return a; });
-    if (Array.isArray(s.unlocked) && s.unlocked.length === 4) save.unlocked = s.unlocked.map((v, d) => clamp(Math.max(v | 0, save.cleared[d][3] ? 5 : 0), 1, NUM_LEVELS));
+    if (Array.isArray(s.unlocked) && s.unlocked.length === 4) save.unlocked = s.unlocked.map((v, d) => { let u = v | 0; while (u < NUM_LEVELS && save.cleared[d][u - 1]) u++; return clamp(u, 1, NUM_LEVELS); });
     if (s.style) save.style = { c: s.style.c | 0, h: s.style.h | 0, p: s.style.p | 0 };
     if (typeof s.diff === 'number') save.diff = clamp(s.diff | 0, 0, 3);
     if (s.settings) Object.assign(save.settings, s.settings);
@@ -735,6 +736,9 @@ const BIOMES = [
   { key: 'factory', name: 'GEAR FACTORY', enemy: 'dll', npc: 'DADDY LONG LEGS', boss: true,
     sky: ['#1c1a28', '#221f30', '#282438', '#2e2940', '#332d46', '#38314a', '#3c344c', '#40374e'],
     far: ['#2a2638', '#332e44'], near: ['#3a3f4c', '#5c6270'], bush: ['#ffd23f', '#1a1a1a'], sun: '#9ad0ff' },
+  { key: 'desert', name: 'DESERT ANTHILL', enemy: 'queen', npc: 'QUEEN ANT',
+    sky: ['#3f8fd6', '#55a0dc', '#6eb1e0', '#8bc0df', '#a9cbd8', '#c8d2c8', '#e2d6b2', '#f2d9a0'],
+    far: ['#d9a06a', '#e8b27a'], near: ['#c98a52', '#dba062'], bush: ['#9a8a4a', '#b8a860'], sun: '#fff1b0' },
 ];
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
@@ -790,13 +794,18 @@ function generateLevel(biomeIdx, seed) {
     P.push(mkPlat(330, 72, 294, 10, 'beam'));
     P.push(mkPlat(330, 82, 12, 170, 'barnwall', { inner: true }));
     L.barn = { x0: 330, x1: 624, y0: 72 };
-  } else {
+  } else if (biomeIdx === 4) {
     // factory: steel floor, riveted walls and a girder ceiling the spiders can hang from
     ground = mkPlat(-400, GROUND_Y, 1440, 240, 'floor'); P.push(ground);
     P.push(mkPlat(-30, -400, 46, 720, 'fwall'));
     P.push(mkPlat(624, -400, 120, 720, 'fwall'));
     P.push(mkPlat(-400, -400, 1440, 416, 'ceiling'));
     L.movers = [];
+  } else {
+    // desert: rising sand floor between two sandstone mesas
+    ground = mkPlat(-400, GROUND_Y, 1440, 240, 'sand2', { dyn: true, rising: true }); P.push(ground);
+    P.push(mkPlat(-30, -400, 46, 720, 'mesa'));
+    P.push(mkPlat(624, -400, 120, 720, 'mesa'));
   }
   const frame = P.slice();
   const gTop = ground.y;
@@ -862,7 +871,7 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const s = randInt(r, 26, 34); const c = mkPlat(xIn(s, 346, 618), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 1);
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 60, 300), gTop - s, s, s, 'crate'); c.touch = [ground]; return c; }, 2);
     L.enemySpawn = { x: dropX, y: beam.y + beam.h + 10, plat: beam };   // the widow drops from the rafters
-  } else {
+  } else if (biomeIdx === 4) {
     // moving lifts first: their whole travel path stays clear of everything else
     const placeMover = (make) => {
       for (let t = 0; t < 120; t++) {
@@ -892,12 +901,24 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 150, 240), w, 10, 'girder'); }, 1);
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 100, 560), gTop - s, s, s, 'mcrate'); c.touch = [ground]; return c; }, 1);
     L.enemySpawn = { x: 470, y: 150 };
+  } else {
+    // the ant hill mound sits on the sand; its hole is where the colony pours out
+    const mw = randInt(r, 92, 112), mx = randInt(r, 250, 390 - mw / 2);
+    const mound = mkPlat(mx, gTop - 16, mw, 16, 'mound', { dyn: true, rising: true }); P.push(mound);
+    L.mound = mound;
+    reserved.push({ x: mx - 30, y: 150, w: mw + 60, h: gTop - 150 });   // keep the space above the nest clear
+    tryPlace(() => { const w = randInt(r, 70, 120); return mkPlat(xIn(w, 30, 610), randInt(r, 52, 120), w, randInt(r, 12, 14), 'sandstone'); }, 3);
+    tryPlace(() => { const w = randInt(r, 60, 100); return mkPlat(xIn(w, 30, 610), randInt(r, 132, 200), w, randInt(r, 12, 14), 'sandstone'); }, 2);
+    tryPlace(() => { const w = randInt(r, 40, 64), h = randInt(r, 26, 44); const c = mkPlat(xIn(w, 60, 580), gTop - h, w, h, 'drock', { buriable: true }); c.touch = [ground]; return c; }, 2);
+    tryPlace(() => { const w = randInt(r, 64, 90); const c = mkPlat(16, randInt(r, 140, 210), w, 12, 'sandstone'); c.touch = [P[1]]; return c; }, 1);
+    tryPlace(() => { const w = randInt(r, 64, 90); const c = mkPlat(624 - w, randInt(r, 140, 210), w, 12, 'sandstone'); c.touch = [P[2]]; return c; }, 1);
+    L.enemySpawn = { x: mx + mw / 2, y: gTop - 18 };
   }
   // Guarantee at least two high anchors for rope swinging
   let high = P.filter(p => !frame.includes(p) && p.y < 160 && !p.move).length;
   for (let t = 0; t < 60 && high < 2; t++) {
     const w = randInt(r, 60, 100);
-    const type = biomeIdx === 0 ? 'ledge' : biomeIdx === 1 ? 'leaf' : biomeIdx === 2 ? 'drift' : biomeIdx === 3 ? 'plank' : 'girder';
+    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone'][biomeIdx];
     const c = mkPlat(xIn(w, 100, 540), randInt(r, 60, 150), w, 10, type);
     if (fits(c, P, null, M, reserved)) { P.push(c); high++; }
   }
@@ -907,6 +928,7 @@ function generateLevel(biomeIdx, seed) {
   // Decorative extras
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
+  if (biomeIdx === 5) { for (let i = 0; i < 260; i++) L.decor.push({ k: 'grain', x: -60 + dr() * 760, y: 150 + dr() * 260, c: dr() < 0.5 ? '#c99a5a' : '#f6e0a8' }); }
   if (biomeIdx === 4) for (let i = 0; i < 5; i++) L.decor.push({ k: 'lamp', x: 60 + i * 130 + Math.floor(dr() * 30), len: 8 + Math.floor(dr() * 14) });
   if (biomeIdx === 2) for (let i = 0; i < 6; i++) L.decor.push({ k: 'shell', x: 110 + dr() * 420, c: pick(dr, ['#ffb3c1', '#fff3d6', '#ffd29a']) });
   return L;
@@ -983,6 +1005,10 @@ function buildLevelArt(L) {
     for (let x = xL + 20; x < xR; x += 70 + Math.floor(tr() * 50)) {
       const base = Math.round(236 + 22 * Math.sin(x * 0.012 + L.biome) + 10 * Math.sin(x * 0.033 + 1)) + 4;
       const th = 14 + Math.floor(tr() * 10);
+      if (L.biome === 5) { // distant saguaro cacti
+        g.fillStyle = '#9a8a4a'; g.fillRect(x, base - th - 6, 3, th + 6); g.fillRect(x - 4, base - th + 2, 2, 6); g.fillRect(x - 4, base - th + 7, 4, 2); g.fillRect(x + 5, base - th - 1, 2, 6); g.fillRect(x + 3, base - th + 4, 3, 2);
+        continue;
+      }
       if (L.biome === 3) { // distant farmhouse silhouettes / haystacks
         pxEllipse(g, x, base, 8, 6, '#b07a25'); pxEllipse(g, x, base - 2, 6, 4, '#c99236');
         continue;
@@ -1016,7 +1042,7 @@ function buildLevelArt(L) {
   // platforms: big frame pieces first, then props
   if (L.biome === 4) drawFactoryFixtures(g, L);
   const big = p => p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand' || p.type === 'floor';
-  for (const p of L.plats) if (big(p)) drawPlatform(g, p, L);
+  for (const p of L.plats) if (big(p) && !p.dyn) drawPlatform(g, p, L);
   for (const p of L.plats) if (!big(p) && !p.dyn) drawPlatform(g, p, L);
   for (const d of L.decor) if (d.k === 'shell') { g.fillStyle = d.c; g.fillRect(Math.round(d.x), 298, 3, 2); g.fillRect(Math.round(d.x) + 1, 297, 1, 1); }
   g.restore();
@@ -1288,6 +1314,26 @@ function drawPlatform(g, p, L) {
       g.stroke();
       break;
     }
+    case 'mesa': {
+      const yTop = -OY - 4, yBot = 330, left = x < 100, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4;
+      g.fillStyle = '#b8743f'; g.fillRect(xa, yTop, xb - xa, yBot - yTop);
+      for (let yy = yTop + (r() * 10 | 0), k = 0; yy < yBot; yy += 9 + Math.floor(r() * 9), k++) { g.fillStyle = k % 2 ? '#c98a52' : '#a8663a'; g.fillRect(xa, yy, xb - xa, 3 + Math.floor(r() * 3)); }
+      for (let i = 0; i < 50; i++) { g.fillStyle = '#8a4e2a'; g.fillRect(xa + Math.floor(r() * (xb - xa)), yTop + Math.floor(r() * (yBot - yTop)), 1, 3 + Math.floor(r() * 6)); }
+      const edge = left ? x + w - 3 : x;
+      g.fillStyle = '#e8a870'; g.fillRect(edge, yTop, 2, yBot - yTop); g.fillStyle = '#7a3e1e'; g.fillRect(left ? edge - 1 : edge + 2, yTop, 1, yBot - yTop);
+      break;
+    }
+    case 'sandstone': case 'drock': {
+      const rock = p.type === 'drock';
+      roundRectPx(g, x, y, w, h, rock ? 6 : 3, '#8a4e2a');
+      roundRectPx(g, x, y, w, h - 2, rock ? 6 : 3, rock ? '#b07a4a' : '#c98a52');
+      g.fillStyle = rock ? '#c99a6a' : '#e8b27a'; g.fillRect(x + 3, y + 1, w - 6, 2);
+      for (let yy = y + 5; yy < y + h - 3; yy += 4) { g.fillStyle = '#a8663a'; g.fillRect(x + 2, yy, w - 4, 1); }
+      for (let i = 0; i < w * h / 40; i++) { g.fillStyle = r() < 0.5 ? '#8a4e2a' : '#f0c890'; g.fillRect(x + 2 + Math.floor(r() * (w - 4)), y + 3 + Math.floor(r() * Math.max(1, h - 5)), 1, 1); }
+      g.fillStyle = '#f2d9a0'; g.fillRect(x + 4, y - 1, w - 8, 1);
+      if (!rock) for (let xx = x + 5; xx < x + w - 4; xx += 7 + Math.floor(r() * 6)) { g.fillStyle = '#8a4e2a'; g.fillRect(xx, y + h, 1, 1 + Math.floor(r() * 4)); }
+      break;
+    }
     case 'girder': {
       g.fillStyle = '#8a3418'; g.fillRect(x, y, w, h);
       g.fillStyle = '#c8502a'; g.fillRect(x, y, w, h - 2);
@@ -1427,6 +1473,8 @@ function drawGearShape(g, cx, cy, rr, ang, c1, c2) {
 }
 function drawDynPlatform(p, t) {
   const x = Math.round(p.x), y = Math.round(p.y), w = p.w, h = p.h;
+  if (p.type === 'sand2') { drawRisingSand(p, t); return; }
+  if (p.type === 'mound') { drawMound(p, t); return; }
   if (p.type === 'lift') {
     if (p.axis === 'x') { ctx.fillStyle = '#1a1a22'; ctx.fillRect(x + 6, 20, 1, y - 20); ctx.fillRect(x + w - 7, 20, 1, y - 20); ctx.fillStyle = '#5c6270'; ctx.fillRect(x + w / 2 - 8, 16, 16, 5); }
     else { ctx.fillStyle = '#2a2d36'; ctx.fillRect(x + w / 2 - 3, y + h, 6, GROUND_Y - y - h); ctx.fillStyle = '#9aa2b0'; ctx.fillRect(x + w / 2 - 2, y + h, 2, GROUND_Y - y - h); }
@@ -1461,6 +1509,35 @@ function updateMovers(L, t) {
     const nx = m.x0 + (m.x1 - m.x0) * k, ny = m.y0 + (m.y1 - m.y0) * k;
     p.dx = nx - p.x; p.dy = ny - p.y; p.x = nx; p.y = ny;
   }
+}
+
+/* ---------- Desert (level 6): rising sand + the ant hill ---------- */
+function drawRisingSand(p, t) {
+  const L = ART.level, x0 = -OX - 4, x1 = BW - OX + 4, y0 = Math.round(p.y), y1 = BH - OY + 4;
+  ctx.fillStyle = '#d9a866'; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+  ctx.fillStyle = '#c99a5a'; for (let yy = y0 + 14; yy < y1; yy += 12) ctx.fillRect(x0, yy, x1 - x0, 2);
+  if (L) for (const d of L.decor) if (d.k === 'grain' && d.y > y0 + 4) { ctx.fillStyle = d.c; ctx.fillRect(Math.round(d.x), Math.round(d.y), 2, 1); }
+  // rippled top edge, drifting slowly
+  for (let x = Math.floor(x0 / 2) * 2; x < x1; x += 2) {
+    const hh = Math.round(Math.sin(x * 0.05 + t * 0.6) * 1.2 + Math.sin(x * 0.013) * 1.5);
+    ctx.fillStyle = '#f2d9a0'; ctx.fillRect(x, y0 - 1 + hh, 2, 3);
+    ctx.fillStyle = '#fff0c8'; ctx.fillRect(x, y0 - 1 + hh, 2, 1);
+  }
+}
+function drawMound(p, t) {
+  const x = p.x, y = p.y, w = p.w, h = p.h, cx = x + w / 2, burst = p.burstT || 0;
+  const sh = burst > 0 ? Math.round(Math.sin(t * 50) * Math.min(2, burst)) : (p.tremble ? Math.round(Math.sin(t * 40)) : 0);
+  // hill: stacked rows narrowing to the top, wider than the collision box at the base
+  for (let i = 0; i < h + 6; i++) {
+    const k = i / (h + 6), half = (w / 2 + 14) * (0.35 + 0.65 * k);
+    ctx.fillStyle = i < 2 ? '#e8b27a' : i % 4 === 0 ? '#b8834a' : '#c99560';
+    ctx.fillRect(Math.round(cx - half + sh), Math.round(y + i), Math.round(half * 2), 1);
+  }
+  for (let i = 0; i < 18; i++) { const a = (i * 2.4) % 1, b = (i * 0.37) % 1; ctx.fillStyle = i % 2 ? '#a8733e' : '#e2b27a'; ctx.fillRect(Math.round(cx + (a - 0.5) * w * 0.9 + sh), Math.round(y + 3 + b * h), 2, 1); }
+  // the nest hole
+  const hr = burst > 0 || p.open ? 9 : 6;
+  pxEllipse(ctx, cx + sh, y + 1, hr + 2, 3, '#8a5a2a');
+  pxEllipse(ctx, cx + sh, y + 1, hr, 2, '#1a0e06');
 }
 
 /* ===== 50_sprites.js ===== */
@@ -2659,17 +2736,17 @@ class Bee extends Enemy {
       if (platAt(this.x, this.y + 3) || this.y > REF_H + 10 || this.y >= WATER_Y) { this.alive = false; burst(W, this.x, this.y, 6, ['#ffcf2a', '#1a1a1a', '#ffffff'], 50, 0.4); }
       return;
     }
-    const D = W.D, spd = 78 * D.speed;
+    const D = W.D, spd = (this.spd || 78) * D.speed;
     let tx, ty, acc = 260;
     const t = W.nearestTarget(this.x, this.y);
-    const sees = t && dist(this.x, this.y, t.x, t.y) < 230 && lineOfSight(this.x, this.y, t.x, t.y);
+    const sees = t && dist(this.x, this.y, t.x, t.y) < (this.seeR || 230) && lineOfSight(this.x, this.y, t.x, t.y);
     if (this.state === 'retreat') { if (this.stateT <= 0) { this.state = 'hover'; this.stateT = 1.1; } }
     else if (this.state === 'hover') { this.vx *= 0.9; this.vy *= 0.9; if (this.stateT <= 0) this.state = 'patrol'; }
     else if (sees) { this.state = 'chase'; this.lastSeen = { x: t.x, y: t.y }; this.lostT = 0; tx = t.x; ty = t.y; acc = 300 * Math.min(1.6, D.aggro); }
     else if (this.state === 'chase' && this.lastSeen && this.lostT < 1.5) { this.lostT += dt; tx = this.lastSeen.x; ty = this.lastSeen.y; }
     else { this.state = 'patrol'; }
     if (this.state === 'patrol') {
-      const h = this.hive && this.hive.alive ? this.hive : { x: 320, y: 120 };
+      const h = this.home || (this.hive && this.hive.alive ? this.hive : { x: 320, y: 120 });
       tx = h.x + Math.cos(this.t * 0.8 + this.phase) * 60; ty = h.y + 10 + Math.sin(this.t * 1.1 + this.phase) * 34;
       acc = 160;
     }
@@ -3236,6 +3313,251 @@ function drawLongLegsPreview(x, y, t) {
   drawLongLegsBody(x, by, { eye: Math.PI * 0.75, alert: false, boot: 0, rot: 0 });
 }
 
+/* ===== 66_ants.js ===== */
+/* =====================================================================
+   66_ANTS - level 6: the ant colony
+   ---------------------------------------------------------------------
+   Nest   : invisible controller. Ants trickle out of the ant hill slowly,
+            then faster and faster; every ant that comes out raises the
+            sand. When a spider gets 5 flies the nest bursts: a swarm,
+            flying ants and the Queen pour out until the Queen falls.
+   Ant    : wanders over every surface; locks on and bites when a spider
+            gets close. One web kills it (no power-up needed).
+   FlyingAnt: flies around the hill, dives at nearby spiders. One web.
+   Queen  : big crowned ant. Web her (needs 5 flies), then bite her.
+   ===================================================================== */
+const allSurfaces = p => p.y > WORLD_TOP + 2;
+
+class Ant extends Enemy {
+  constructor(x, y, opts = {}) {
+    super('ant', x, y);
+    this.r = 5; this.hitR = 10; this.state = 'air'; this.plat = null; this.s = 0; this.nx = 0; this.ny = -1;
+    this.vx = opts.vx !== undefined ? opts.vx : (Math.random() - 0.5) * 140; this.vy = opts.vy !== undefined ? opts.vy : -150 - Math.random() * 60;
+    this.walk = 0; this.wanderSign = Math.random() < 0.5 ? -1 : 1; this.locked = false; this.calmT = 0.8;
+    this.attackCD = 0.6; this.jumpCD = 1 + Math.random(); this.stallT = 0; this.base = 30; this.chase = 62; this.lockR = 58;
+  }
+  onWeb(W) { this.squash(W, true); return 'kill'; }
+  biteable() { return false; }
+  squash(W, byWeb) {
+    if (!this.alive) return;
+    this.alive = false;
+    burst(W, this.x, this.y, 10, this.burstColors(), 70, 0.45);
+    if (byWeb) { SFX.play('beedown'); floater(W, this.x, this.y - 10, 'SPLAT!', '#ffffff'); }
+  }
+  burstColors() { return ['#8a2a10', '#c8502a', '#ffffff', '#3a0e06']; }
+  update(dt, W) {
+    if (this.mirror) { this.glide(dt); return; }
+    const D = W.D;
+    this.attackCD -= dt; this.jumpCD -= dt; this.calmT -= dt;
+    if (this.plat && !PLATS.includes(this.plat)) { this.state = 'air'; this.plat = null; }   // buried under the sand
+    const t = W.nearestTarget(this.x, this.y);
+    const d = t ? dist(this.x, this.y, t.x, t.y) : 999;
+    if (!this.locked && this.calmT <= 0 && t && d < this.lockR * Math.sqrt(D.aggro) && lineOfSight(this.x, this.y, t.x, t.y)) { this.locked = true; this.lockFlash = 0.4; }
+    if (this.locked && (d > 160 || !t)) this.locked = false;
+    this.lockFlash = Math.max(0, (this.lockFlash || 0) - dt);
+    if (this.state === 'air') crawlerFly(this, dt, null, W);
+    else if (!this.tickFrozen(dt, W)) {
+      let sign = this.wanderSign, speed = this.base * D.speed;
+      if (this.locked && t) {
+        const g = greedyDir(this, t.x, t.y, allSurfaces);
+        sign = g.sign; speed = this.chase * D.speed;
+        if (!sign || this.stallT > 0.35) {
+          if (this.jumpCD <= 0 && d < 140) { jumpToward(this, t.x, t.y - 4, 300, 0.3, 0.7, 240); this.jumpCD = (1.6 + Math.random()) / D.aggro; this.stallT = 0; }
+        }
+      } else if (Math.random() < dt * 0.25) this.wanderSign *= -1;
+      if (this.state === 'stuck' && sign) {
+        const res = crawlMove(this, sign * speed * dt, allSurfaces);
+        if (res === 'blocked') { this.stallT += dt; if (!this.locked) this.wanderSign *= -1; }
+        else { this.stallT = Math.max(0, this.stallT - dt); this.facing = sign; this.walk += speed * dt; }
+      }
+      if (this.state === 'stuck' && !this.locked && this.jumpCD <= 0 && Math.random() < dt * 0.08) {   // the odd random hop
+        jumpToward(this, this.x + (Math.random() - 0.5) * 120, this.y - 40 - Math.random() * 40, 260, 0.35, 0.7, 200); this.jumpCD = 2.5;
+      }
+    }
+    if (this.state === 'stuck') syncStuck(this);
+    const target = this.state === 'stuck' ? Math.atan2(this.ny, this.nx) + Math.PI / 2 : Math.atan2(this.vy, Math.abs(this.vx) + 1) * 0.4;
+    this.drawAngle += angDiff(this.drawAngle, target) * Math.min(1, dt * 14);
+    if (this.frozenT > 0 || !t) return;
+    // bite on contact, then back off for a moment
+    if (this.locked && this.attackCD <= 0 && d < this.r + t.r + 3) {
+      W.hurt(t, 'hit', this); this.attackCD = 1.5; this.locked = false; this.calmT = 1.6; this.wanderSign = -(Math.sign(t.x - this.x) || 1);
+    }
+  }
+  draw(W) {
+    if (!this.alive) return;
+    drawAnt(this.x, this.y, this.drawAngle, this.facing, this.walk, { angry: this.locked, flash: this.lockFlash > 0, hell: W.D.hell, air: this.state === 'air' });
+  }
+}
+
+class Queen extends Ant {
+  constructor(x, y) {
+    super(x, y, { vx: (Math.random() - 0.5) * 80, vy: -240 });
+    this.type = 'queen'; this.r = 9; this.hitR = 16; this.base = 40; this.chase = 70; this.lockR = 110; this.breathT = 0;
+    this.hopT = 3;
+  }
+  onWeb(W, S) { return Enemy.prototype.onWeb.call(this, W, S); }
+  biteable() { return this.frozenT > 0; }
+  cancelAttacks() { this.breathT = 0; }
+  defeat(W, by) { Enemy.prototype.defeat.call(this, W, by); }
+  burstColors() { return ['#8a2a10', '#ffd23f', '#ff8a00', '#ffffff']; }
+  update(dt, W) {
+    if (this.mirror) { this.glide(dt); return; }
+    // she darts around the arena now and then so the fight stays lively
+    this.hopT -= dt;
+    if (this.state === 'stuck' && this.frozenT <= 0 && this.hopT <= 0 && !this.locked) {
+      this.hopT = (3 + Math.random() * 3) / W.D.aggro;
+      jumpToward(this, 80 + Math.random() * 480, 60 + Math.random() * 140, 380, 0.4, 0.9, 260);
+    }
+    super.update(dt, W);
+    if (this.frozenT > 0) return;
+    const t = W.nearestTarget(this.x, this.y);
+    if (t && this.state === 'stuck') { const h = headFrom(this, 12); hellBreath(this, W, dt, h.x, h.y, Math.atan2(t.y - h.y, t.x - h.x), t); }
+  }
+  draw(W) {
+    if (!this.alive) return;
+    drawAnt(this.x, this.y, this.drawAngle, this.facing, this.walk, { queen: true, angry: this.locked, hell: W.D.hell, frozen: this.frozenT > 0, shiver: this.frozenT > 0 && this.frozenT < 1.5, air: this.state === 'air', fire: this.breathT > 0 });
+    this.drawFreezeBar(W);
+  }
+}
+
+class FlyingAnt extends Bee {
+  constructor(x, y, home) {
+    super(x, y, null);
+    this.type = 'fant'; this.home = home; this.seeR = 100; this.spd = 70; this.vy = -90;
+  }
+  onWeb(W, S) { this.knock(W, S, false); return 'knock'; }
+  draw(W) {
+    if (!this.alive) return;
+    drawAnt(this.x, this.y, this.state === 'fall' ? T * 9 : 0, this.facing, T * 40, { wings: this.state !== 'fall', angry: this.state === 'chase', hell: W.D.hell, air: true });
+  }
+}
+
+/* ---------- The nest: spawns the colony and raises the sand ---------- */
+class Nest extends Enemy {
+  constructor(W) {
+    super('nest', W.L.enemySpawn.x, W.L.enemySpawn.y);
+    const L = W.L, D = W.D;
+    this.mound = L.mound; this.ground = L.plats.find(p => p.type === 'sand2');
+    this.gBase = this.ground.y; this.gH = this.ground.h; this.mBase = this.mound.y; this.mH = this.mound.h; this.spawnBase = L.spawns.map(s => s.y);
+    this.phase = 'calm'; this.t = 0; this.swarmT = 0; this.spawnT = 3; this.flyT = 0; this.rise = 0; this.riseTarget = 0; this.queen = null;
+    this.hellK = D.hell ? 1.4 : 1;
+    this.maxRise = 118;
+  }
+  webbable() { return false; }
+  biteable() { return false; }
+  hole() { return { x: this.mound.x + this.mound.w / 2, y: this.mound.y - 2 }; }
+  count(type) { let n = 0; for (const e of this.W.enemies) if (e.alive && e.type === type) n++; return n; }
+  emitAnt(W) {
+    const h = this.hole();
+    W.enemies.push(new Ant(h.x + (Math.random() - 0.5) * 6, h.y - 4));
+    burst(W, h.x, h.y, 5, ['#e8b27a', '#c99560'], 50, 0.4, 200, 1);
+    this.riseTarget = Math.min(this.maxRise, this.riseTarget + (this.phase === 'calm' ? 1.6 : 0.9));
+  }
+  update(dt, W) {
+    this.W = W;
+    const D = W.D;
+    this.t += dt;
+    if (this.mound.burstT > 0) this.mound.burstT -= dt;
+    if (this.phase === 'calm') {
+      // trickle: slow at first, steadily quicker
+      const interval = Math.max(1.4, 6.5 - this.t * 0.07) / Math.sqrt(D.aggro);
+      const cap = Math.min(9, 3 + Math.floor(this.t / 18)) + (D.hell ? 3 : 0);
+      this.spawnT -= dt;
+      if (this.spawnT <= 0) { this.spawnT = interval; if (this.count('ant') < cap) this.emitAnt(W); }
+      const best = Math.max(0, ...W.spiders.filter(s => s.alive).map(s => s.flies));
+      this.mound.tremble = best >= 4;
+      if (W.spiders.some(s => s.alive && s.powered)) this.burst(W);
+    } else if (this.phase === 'swarm') {
+      this.swarmT += dt;
+      const interval = Math.max(0.3, 1.1 - this.swarmT * 0.02) / Math.sqrt(D.aggro);
+      const cap = Math.round((D.speed < 0.9 ? 11 : 15) * this.hellK + Math.min(8, this.swarmT / 6));
+      this.spawnT -= dt;
+      if (this.spawnT <= 0) { this.spawnT = interval; if (this.count('ant') < cap) this.emitAnt(W); }
+      this.flyT -= dt;
+      if (this.flyT <= 0) { this.flyT = 5; if (this.count('fant') < this.fliers) { const h = this.hole(); W.enemies.push(new FlyingAnt(h.x, h.y - 8, { x: h.x, y: 130 })); } }
+      this.riseTarget = Math.min(this.maxRise, this.riseTarget + 0.5 * dt);   // the swarm keeps digging
+      if (this.queen && !this.queen.alive) this.finish(W);
+    } else if (this.phase === 'done') {
+      for (const e of W.enemies) if (e.alive && e.poofT !== undefined) { e.poofT -= dt; if (e.poofT <= 0) { e.alive = false; burst(W, e.x, e.y, 6, ['#e8b27a', '#8a2a10'], 50, 0.4); } }
+    }
+    // the sand creeps up as the colony digs out
+    const prev = this.rise;
+    this.rise = approach(this.rise, this.riseTarget, 7 * dt);
+    const dy = -(this.rise - prev);
+    this.ground.y = this.gBase - this.rise; this.ground.h = this.gH + this.rise; this.ground.dy = dy;
+    this.mound.y = this.mBase - this.rise; this.mound.dy = dy;
+    W.L.spawns.forEach((s, i) => { s.y = this.spawnBase[i] - this.rise; });
+    if (dy) this.buryCheck(W);
+    if (this.phase === 'swarm' && Math.random() < dt * 8) { const h = this.hole(); W.particles.push({ x: h.x + (Math.random() - 0.5) * 14, y: h.y, vx: (Math.random() - 0.5) * 40, vy: -40 - Math.random() * 40, life: 0.6, max: 0.6, color: '#e8c890', size: 1, grav: 120 }); }
+  }
+  buryCheck(W) {
+    const top = this.ground.y;
+    for (let i = PLATS.length - 1; i >= 0; i--) {
+      const p = PLATS[i];
+      if (!p.buriable || top > p.y + p.h * 0.45) continue;
+      PLATS.splice(i, 1);
+      burst(W, p.x + p.w / 2, top, 10, ['#e8b27a', '#c99560'], 50, 0.5);
+      for (const s of W.spiders) {
+        if (s.plat === p) { s.state = 'air'; s.plat = null; s.vx = 0; s.vy = -40; }
+        if (s.rope && s.rope.plat === p) { s.state = 'air'; s.rope = null; }
+      }
+      for (const e of W.enemies) if (e.plat === p) { e.state = 'air'; e.plat = null; }
+    }
+  }
+  burst(W) {
+    this.phase = 'swarm'; this.mound.burstT = 1.5; this.mound.open = true; this.mound.tremble = false; this.spawnT = 0.6;
+    const D = W.D, h = this.hole();
+    SFX.play('shriek'); shake(0.6, 6);
+    burst(W, h.x, h.y, 50, ['#e8b27a', '#c99560', '#f6e0a8', '#8a5a2a'], 180, 0.9, 260);
+    const n = D.speed < 0.9 ? 6 : D.hell ? 12 : 9;
+    for (let i = 0; i < n; i++) W.enemies.push(new Ant(h.x + (Math.random() - 0.5) * 20, h.y - 6, { vx: (Math.random() - 0.5) * 260, vy: -200 - Math.random() * 120 }));
+    this.fliers = D.speed < 0.9 ? 2 : D.hell ? 5 : 3;
+    for (let i = 0; i < this.fliers; i++) { const f = new FlyingAnt(h.x + (i - 1) * 10, h.y - 10, { x: h.x, y: 130 }); f.vx = (Math.random() - 0.5) * 120; W.enemies.push(f); }
+    this.queen = new Queen(h.x, h.y - 10);
+    W.enemies.push(this.queen);
+    this.riseTarget = Math.min(this.maxRise, this.riseTarget + 10);
+    if (W.rules.onBossSpawn) W.rules.onBossSpawn(this.queen);
+  }
+  finish(W) {
+    this.phase = 'done';
+    // without their queen the colony scatters
+    let k = 0;
+    for (const e of W.enemies) if (e.alive && (e.type === 'ant' || e.type === 'fant')) e.poofT = 0.4 + 0.12 * k++;
+  }
+  draw() {}
+}
+
+/* Ant sprite: head, thorax, big abdomen, six scurrying legs. o.queen adds a crown, o.wings flutters */
+function drawAnt(x, y, ang, facing, walk, o) {
+  const q = !!o.queen, s = q ? 2 : 1;
+  ctx.save(); ctx.translate(Math.round(x + (o.shiver ? Math.sin(T * 60) : 0)), Math.round(y)); ctx.rotate(ang); ctx.scale(facing * s, s);
+  const dark = o.hell ? '#3a0a06' : q ? '#5a1a0a' : '#4a1408', mid = o.hell ? '#8a1a10' : q ? '#a0381a' : '#8a2a10', hi = q ? '#e0703a' : '#c8502a';
+  // legs (drawn under the body), alternating tripod gait
+  ctx.fillStyle = dark;
+  for (let i = 0; i < 3; i++) {
+    const ph = Math.sin(walk * 0.5 + i * 2.1) * (o.air ? 0.4 : 1.6), lx = -1 + i * 2;
+    ctx.fillRect(Math.round(lx + ph), 1, 1, 3); ctx.fillRect(Math.round(lx - ph * 0.6) - 1, 3, 2, 1);
+  }
+  if (o.wings) { const f = Math.sin(T * 60) > 0; ctx.fillStyle = 'rgba(220,235,255,0.75)'; ctx.fillRect(-4, f ? -6 : -4, 5, 2); ctx.fillRect(-1, f ? -7 : -5, 5, 2); }
+  // abdomen, thorax, head
+  pxEllipse(ctx, -5, -1, q ? 4 : 3, q ? 3 : 2, dark);
+  pxEllipse(ctx, -5, -2, q ? 3 : 2, q ? 2 : 1, mid);
+  if (q) { ctx.fillStyle = '#d6a540'; ctx.fillRect(-8, -1, 1, 3); ctx.fillRect(-6, -1, 1, 3); ctx.fillRect(-4, -1, 1, 3); }
+  ctx.fillStyle = dark; ctx.fillRect(-1, -2, 3, 2); ctx.fillStyle = mid; ctx.fillRect(-1, -2, 2, 1);
+  pxCircle(ctx, 3, -2, 1.5, dark); ctx.fillStyle = hi; ctx.fillRect(3, -3, 1, 1);
+  ctx.fillStyle = o.angry || o.flash ? '#ff3b3b' : '#ffd27a'; ctx.fillRect(4, -2, 1, 1);
+  // antennae + mandibles
+  ctx.fillStyle = dark; ctx.fillRect(4, -5, 1, 2); ctx.fillRect(5, -6, 1, 1); ctx.fillRect(2, -5, 1, 2); ctx.fillRect(1, -6, 1, 1);
+  if (o.angry) { ctx.fillStyle = '#ffe6c8'; ctx.fillRect(5, -1, 1, 1); }
+  if (q) { // crown
+    ctx.fillStyle = '#ffd23f'; ctx.fillRect(1, -5, 5, 1); ctx.fillRect(1, -7, 1, 2); ctx.fillRect(3, -8, 1, 3); ctx.fillRect(5, -7, 1, 2);
+    ctx.fillStyle = '#ff2d4a'; ctx.fillRect(3, -6, 1, 1);
+  }
+  ctx.restore();
+  if (o.frozen) { ctx.globalAlpha = 0.6; pxCircle(ctx, x, y - 2, q ? 14 : 7, '#ffffff'); ctx.globalAlpha = 1; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x - 12, y - 8); ctx.lineTo(x + 12, y + 4); ctx.moveTo(x - 10, y + 4); ctx.lineTo(x + 11, y - 9); ctx.stroke(); }
+  if (o.fire && Math.random() < 0.3) { ctx.fillStyle = '#ffe45c'; ctx.fillRect(Math.round(x + facing * 10), Math.round(y - 4), 2, 2); }
+}
+
 /* ===== 70_world.js ===== */
 /* =====================================================================
    70_WORLD - the simulation container shared by campaign, VS and warm-up
@@ -3318,13 +3640,13 @@ class World {
       this.moverT = (this.moverT || 0) + dt;
       if (this.moverTarget !== undefined) { const err = this.moverTarget - this.moverT; if (Math.abs(err) > 1) this.moverT = this.moverTarget; else this.moverT += err * Math.min(1, dt * 3); }
       updateMovers(this.L, this.moverT);
-      // ropes anchored to a moving lift travel with it
-      for (const s of this.spiders) if (s.rope && s.rope.plat && s.rope.plat.move) { s.rope.ax += s.rope.plat.dx; s.rope.ay += s.rope.plat.dy; }
     }
+    // ropes anchored to a moving lift or the rising sand travel with it
+    for (const s of this.spiders) if (s.rope && s.rope.plat && (s.rope.plat.dx || s.rope.plat.dy)) { s.rope.ax += s.rope.plat.dx || 0; s.rope.ay += s.rope.plat.dy || 0; }
     for (const s of this.spiders) s.update(dt, controlsFor(s), this);
     for (const r of this.remotes.values()) r.update(dt);
     for (const e of this.enemies) if (e.alive) e.update(dt, this);
-    for (let i = this.enemies.length - 1; i >= 0; i--) { const e = this.enemies[i]; if (!e.alive && e.type === 'bee') this.enemies.splice(i, 1); }
+    for (let i = this.enemies.length - 1; i >= 0; i--) { const e = this.enemies[i]; if (!e.alive && (e.type === 'bee' || e.type === 'ant' || e.type === 'fant')) this.enemies.splice(i, 1); }
     for (const w of this.webs) w.update(dt, this);
     this.webs = this.webs.filter(w => !w.dead);
     this.updateEnemyShots(dt);
@@ -3441,6 +3763,7 @@ class World {
   }
   drawAmbient() {
     for (const a of this.ambient) {
+      if (this.biome === 5) { const gx = Math.round(((a.x + this.time * 40 + a.t * 7) % 680) - 20), gy = Math.round(a.y); ctx.globalAlpha = 0.5; ctx.fillStyle = '#fff0c8'; ctx.fillRect(gx, gy, 2, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 4) { ctx.globalAlpha = 0.25 + 0.25 * Math.sin(a.t * 2); ctx.fillStyle = '#cfe0ff'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 3) { if (a.x > 330 && a.y > 80) { ctx.globalAlpha = 0.35 + 0.3 * Math.sin(a.t * 2); ctx.fillStyle = '#ffe3a0'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; } continue; }
       if (this.biome === 2) { // seagulls
@@ -3496,11 +3819,13 @@ const Campaign = {
     else if (level === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y));
     else if (level === 2) W.enemies.push(new Gecko(es.x, es.y));
     else if (level === 3) W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
-    else W.enemies.push(new LongLegs(es.x, es.y, W.D));
+    else if (level === 4) W.enemies.push(new LongLegs(es.x, es.y, W.D));
+    else W.enemies.push(new Nest(W));          // the queen arrives when the nest bursts
     this.boss = W.enemies[0];
     for (let i = 0; i < 2; i++) W.spawnFly();
     const B = BIOMES[level];
-    this.banner = B.boss ? { text: 'BOSS: ' + B.npc, sub: 'GET 5 FLIES, THEN WEB ITS LEGS AND BITE THEM OFF', t: 3.4, max: 3.4, color: '#ff8c42' }
+    if (level === 5) this.banner = { text: 'LEVEL 6: ' + B.name, sub: 'CATCH 5 FLIES - THEN THE NEST BURSTS! TAKE DOWN THE QUEEN', t: 3.4, max: 3.4, color: '#ffd23f' };
+    else this.banner = B.boss ? { text: 'BOSS: ' + B.npc, sub: 'GET 5 FLIES, THEN WEB ITS LEGS AND BITE THEM OFF', t: 3.4, max: 3.4, color: '#ff8c42' }
                          : { text: 'LEVEL ' + (level + 1) + ': ' + B.name, sub: 'CATCH 5 GOLDEN FLIES, THEN TAKE DOWN THE ' + B.npc, t: 3, max: 3, color: '#ffd23f' };
     track('game_start', { mode: 'campaign', level: level + 1, difficulty: DIFFS[diff].name });
   },
@@ -3523,6 +3848,10 @@ const Campaign = {
       onEnemyTrapped(e) {
         if (e.type === 'dll') { C.banner = e.phase === 'legs' ? { text: 'LEG WEBBED!', sub: 'BITE IT TO TEAR IT OFF!', t: 1.6, max: 1.6, color: '#ffffff' } : { text: 'BODY WEBBED!', sub: 'BITE IT!', t: 1.6, max: 1.6, color: '#ffffff' }; return; }
         C.banner = { text: e.type === 'hive' ? 'HIVE WEBBED!' : BIOMES[C.level].npc + ' STUCK!', sub: 'CRAWL OVER AND BITE IT!', t: 1.8, max: 1.8, color: '#ffffff' };
+      },
+      onBossSpawn(q) {
+        C.boss = q;
+        C.banner = { text: 'THE NEST BURST!', sub: 'WEB THE QUEEN ANT (CROWN), THEN BITE HER!', t: 2.8, max: 2.8, color: '#ff8c42' };
       },
       onBossPhase(e, what) {
         if (what === 'ball') C.banner = { text: 'ALL LEGS GONE!', sub: 'THE BODY IS ROLLING - WEB IT, THEN BITE IT!', t: 2.6, max: 2.6, color: '#ff8c42' };
@@ -3603,6 +3932,10 @@ const Campaign = {
     if (this.phase === 'won') return ['LEVEL CLEAR!', '#7df06a'];
     if (this.W.starCoin) return ['GRAB THE STAR COIN!', '#ffd23f'];
     if (me.stunT > 0) return ['WEBBED! MASH BUTTONS TO BREAK FREE!', Math.floor(T * 6) % 2 ? '#ffffff' : '#ff5a7a'];
+    if (boss.type === 'nest') {
+      if (me.flies >= 3) return ['CAREFUL - THE NEST BURSTS AT 5 FLIES!', Math.floor(T * 4) % 2 ? '#ff8c42' : '#ffffff'];
+      return ['CATCH 5 GOLDEN FLIES - DODGE THE ANTS', '#ffffff'];
+    }
     if (boss.type === 'dll') {
       const blink = Math.floor(T * 5) % 2 ? '#ffffff' : '#ffd23f';
       if (boss.phase === 'legs') {
@@ -3673,6 +4006,7 @@ const Overworld = {
     { x: 400, y: 236, biome: 2 },
     { x: 548, y: 122, biome: 3 },
     { x: 560, y: 272, biome: 4 },
+    { x: 300, y: 296, biome: 5 },
   ],
   cur: 0, tok: { x: 92, y: 262 }, walk: null, unlockAnim: null, map: null, mapKey: '', fog: null, puffs: [],
   enter(fromLevel, newUnlock) {
@@ -3762,6 +4096,12 @@ const Overworld = {
     g.fillStyle = '#9ad0ff'; g.fillRect(582, 250, 4, 4); g.fillRect(592, 250, 4, 4); g.fillRect(602, 250, 4, 4);
     g.fillStyle = '#5c6270'; g.fillRect(612, 218, 7, 46); g.fillStyle = '#c43a3a'; g.fillRect(612, 222, 7, 2);
     pxCircle(g, 616, 210, 5, '#b4bcc8'); pxCircle(g, 621, 202, 4, '#c8ccd4');
+    // desert: sand dunes, a mesa and the ant hill
+    pxCircle(g, 300, 296, 44, '#e8c27a'); pxCircle(g, 300, 296, 34, '#f2d9a0');
+    g.fillStyle = '#b8743f'; g.fillRect(262, 262, 22, 18); g.fillStyle = '#c98a52'; g.fillRect(262, 262, 22, 3);
+    for (let i = 0; i < 8; i++) { g.fillStyle = '#c99560'; g.fillRect(318 - i * 2, 290 + i, 8 + i * 4, 1); }
+    pxEllipse(g, 326, 290, 3, 1, '#1a0e06');
+    g.fillStyle = '#8a8a3a'; g.fillRect(338, 274, 2, 12); g.fillRect(335, 278, 2, 4); g.fillRect(341, 276, 2, 4);
     // paths
     for (let i = 0; i < this.nodes.length - 1; i++) {
       for (let k = 0; k <= 1.0001; k += 0.04) { const p = this.pathPoint(i, i + 1, k); g.fillStyle = '#5a3a1f'; g.fillRect(Math.round(p.x) - 2, Math.round(p.y) - 1, 4, 4); g.fillStyle = '#f3e3b0'; g.fillRect(Math.round(p.x) - 1, Math.round(p.y) - 1, 2, 2); }
@@ -5535,14 +5875,15 @@ Screens.practice = {
       const bandH = Math.ceil((b.h - 30) / B.sky.length);
       B.sky.forEach((c, k) => { ctx.fillStyle = c; ctx.fillRect(x, y + k * bandH, b.w, bandH); });
       const gy = y + b.h - 30;
-      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
-      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
+      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : b.card === 5 ? '#f2d9a0' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
+      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : b.card === 5 ? '#d9a866' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
       const ex = x + b.w / 2, ey = gy - 8;
       if (b.card === 0) drawLizard(ex, ey + 2, 0, -1, T * 10, Math.sin(T * 2) * 0.2, {});
       else if (b.card === 1) { drawHive(ex, ey - 22, {}); drawBee(ex + 22, ey - 18 + Math.sin(T * 5) * 3, -1, {}); }
       else if (b.card === 2) drawGecko(ex, ey + 2, 0, -1, T * 14, 0, {});
       else if (b.card === 3) drawWidow(ex, ey, 0, -1, T * 10, {});
-      else drawLongLegsPreview(ex, gy, T);
+      else if (b.card === 4) drawLongLegsPreview(ex, gy, T);
+      else { drawMound({ x: ex - 22, y: gy - 6, w: 44, h: 6, open: true }, T); drawAnt(ex + 2, gy - 11, 0, -1, T * 10, { queen: true }); drawAnt(ex - 26, gy - 3, 0, 1, T * 14, {}); drawAnt(ex + 26, gy - 3, 0, -1, T * 12, {}); }
       const nm = (b.card + 1) + '. ' + B.name, npc = B.npc.length * 6 > b.w - 4 ? B.npc.replace('DADDY ', '') : B.npc;
       drawText(nm.length * 6 > b.w - 4 ? (b.card + 1) + '. ' + B.name.split(' ').pop() : nm, ex, gy + 8, 1, '#ffffff', 'center', '#140c26');
       drawText(npc, ex, gy + 18, 1, sel ? '#ffd23f' : '#bba8ff', 'center', '#140c26');
@@ -5566,7 +5907,7 @@ Screens.options = {
       { label: 'CONTROLS', action: () => setScene('controls') },
       { label: Screens.options.confirmReset ? 'TAP AGAIN TO ERASE' : 'RESET PROGRESS', action: () => {
         if (!Screens.options.confirmReset) { Screens.options.confirmReset = true; return; }
-        save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]]; persist(); Screens.options.confirmReset = false;
+        save.stars = 0; save.unlocked = [1, 1, 1, 1]; save.cleared = [0, 0, 0, 0].map(() => new Array(NUM_LEVELS).fill(0)); persist(); Screens.options.confirmReset = false;
       } },
       { label: 'BACK', action: () => { Screens.options.confirmReset = false; setScene(optionsReturn); } },
     ];
@@ -5756,7 +6097,7 @@ Screens.ending = {
     drawMenuBackdrop(); dim(0.55);
     for (const p of this.fx) { ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.col; ctx.fillRect(Math.round(p.x), Math.round(p.y), 2, 2); }
     ctx.globalAlpha = 1;
-    drawText('YOU BEAT THE DADDY LONG LEGS!', BW / 2, BH / 2 - 112, 2, '#ffffff', 'center', null, '#140c26');
+    drawText('YOU BEAT THE ' + BIOMES[NUM_LEVELS - 1].npc + '!', BW / 2, BH / 2 - 112, 2, '#ffffff', 'center', null, '#140c26');
     const s = textWidth('NEW LEVELS COMING SOON!', 4) > BW - 20 ? 3 : 4;
     drawText('NEW LEVELS COMING SOON!', BW / 2, BH / 2 - 80, s, '#ffd23f', 'center', '#8a5a00', '#140c26');
     drawStarShape(ctx, BW / 2 - 40, BH / 2 - 20, 12, '#ffd23f', T);
