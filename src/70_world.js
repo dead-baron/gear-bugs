@@ -188,7 +188,7 @@ class World {
     ctx.globalAlpha = 1;
     drawWater(this.L, T, this);
     drawWheat(this.L, T, true);
-    if (this.L.pond) drawPondPlants(this.L, T, true);
+    if (this.L.pond) { drawPondPlants(this.L, T, true); drawSwampLight(this.L, T); }
     for (const f of this.floaters) { ctx.globalAlpha = clamp(f.life * 2, 0, 1); drawText(f.text, f.x, f.y, 1, f.color, 'center', '#140c26'); }
     ctx.globalAlpha = 1;
     // mouse crosshair
@@ -207,6 +207,7 @@ class World {
   }
   drawAmbient() {
     for (const a of this.ambient) {
+      if (this.biome === 6) { const gl = 0.5 + 0.5 * Math.sin(a.t * 3); if (gl > 0.3) { ctx.globalAlpha = gl; ctx.fillStyle = '#d8ff70'; ctx.fillRect(Math.round(a.x), Math.round(Math.min(a.y, 270)), 1, 1); ctx.globalAlpha = gl * 0.3; pxCircle(ctx, a.x, Math.min(a.y, 270), 2, '#d8ff70'); ctx.globalAlpha = 1; } continue; }
       if (this.biome === 5) { const gx = Math.round(((a.x + this.time * 40 + a.t * 7) % 680) - 20), gy = Math.round(a.y); ctx.globalAlpha = 0.5; ctx.fillStyle = '#fff0c8'; ctx.fillRect(gx, gy, 2, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 4) { ctx.globalAlpha = 0.25 + 0.25 * Math.sin(a.t * 2); ctx.fillStyle = '#cfe0ff'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 3) { if (a.x > 330 && a.y > 80) { ctx.globalAlpha = 0.35 + 0.3 * Math.sin(a.t * 2); ctx.fillStyle = '#ffe3a0'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; } continue; }

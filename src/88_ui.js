@@ -229,8 +229,8 @@ Screens.practice = {
       const bandH = Math.ceil((b.h - 30) / B.sky.length);
       B.sky.forEach((c, k) => { ctx.fillStyle = c; ctx.fillRect(x, y + k * bandH, b.w, bandH); });
       const gy = y + b.h - 30;
-      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : b.card === 5 ? '#f2d9a0' : b.card === 6 ? '#9ad8ff' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
-      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : b.card === 5 ? '#d9a866' : b.card === 6 ? '#2a7fc9' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
+      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : b.card === 5 ? '#f2d9a0' : b.card === 6 ? '#5a9a7a' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
+      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : b.card === 5 ? '#d9a866' : b.card === 6 ? '#1a3a32' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
       const ex = x + b.w / 2, ey = gy - 8;
       if (b.card === 0) drawLizard(ex, ey + 2, 0, -1, T * 10, Math.sin(T * 2) * 0.2, {});
       else if (b.card === 1) { drawHive(ex, ey - 22, {}); drawBee(ex + 22, ey - 18 + Math.sin(T * 5) * 3, -1, {}); }

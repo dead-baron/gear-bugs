@@ -56,7 +56,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-03T19:48:40Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-03T19:54:40Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -740,9 +740,9 @@ const BIOMES = [
   { key: 'desert', name: 'DESERT ANTHILL', enemy: 'queen', npc: 'QUEEN ANT',
     sky: ['#3f8fd6', '#55a0dc', '#6eb1e0', '#8bc0df', '#a9cbd8', '#c8d2c8', '#e2d6b2', '#f2d9a0'],
     far: ['#d9a06a', '#e8b27a'], near: ['#c98a52', '#dba062'], bush: ['#9a8a4a', '#b8a860'], sun: '#fff1b0' },
-  { key: 'pond', name: 'LILY POND', enemy: 'frog', npc: 'BULLFROG',
-    sky: ['#6fb8e8', '#7cc0ea', '#8cc9ec', '#9ed2ee', '#b1dbef', '#c4e3ee', '#d6eaea', '#e4efe2'],
-    far: ['#8fc98a', '#a3d89a'], near: ['#5fae58', '#74c26a'], bush: ['#3f9a44', '#5fbf52'], sun: '#fff6c0' },
+  { key: 'pond', name: 'LILY SWAMP', enemy: 'frog', npc: 'BULLFROG',
+    sky: ['#0c1a14', '#10221a', '#142a20', '#183226', '#1c3a2c', '#204232', '#264a38', '#2c523e'],
+    far: ['#16281e', '#1c3226'], near: ['#2a4a32', '#3a6040'], bush: ['#2f6a34', '#4f8a44'], sun: '#e8f0b0' },
 ];
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
@@ -806,14 +806,18 @@ function generateLevel(biomeIdx, seed) {
     P.push(mkPlat(-400, -400, 1440, 416, 'ceiling'));
     L.movers = [];
   } else if (biomeIdx === 6) {
-    // pond: muddy banks on both sides, open water between them
-    const lx = randInt(r, 110, 140), rx = randInt(r, 500, 530);
-    L.water = { y: 288 };
-    ground = mkPlat(-400, 274, lx + 400, 300, 'bank'); P.push(ground);
-    P.push(mkPlat(rx, 274, 1040 - rx, 300, 'bank'));
-    L.pond = { x0: lx, x1: rx };
+    // swamp: walled in by tall grass, roofed by a leafy canopy, water across the whole floor
+    L.water = { y: 290 };
+    P.push(mkPlat(-30, -400, 46, 720, 'reedwall'));
+    P.push(mkPlat(624, -400, 120, 720, 'reedwall'));
+    P.push(mkPlat(-400, -400, 1440, 418, 'canopy'));
+    L.pond = { x0: 16, x1: 624 };
     L.movers = [];
-    spawnXs = [60, 580, 96, 544];
+    // mossy stumps rise out of the water: everyone starts on one
+    const top = randInt(r, 262, 268), lw = randInt(r, 44, 52), rw = randInt(r, 44, 52), lx = randInt(r, 40, 70), rx = randInt(r, 570, 590) - rw;
+    ground = mkPlat(lx, top, lw, 400, 'stump'); P.push(ground);
+    P.push(mkPlat(rx, top, rw, 400, 'stump'));
+    spawnXs = [lx + lw / 2 - 10, rx + rw / 2 + 10, lx + lw / 2 + 10, rx + rw / 2 - 10];
   } else {
     // desert: rising sand floor between two sandstone mesas
     ground = mkPlat(-400, GROUND_Y, 1440, 240, 'sand2', { dyn: true, rising: true }); P.push(ground);
@@ -915,18 +919,22 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 100, 560), gTop - s, s, s, 'mcrate'); c.touch = [ground]; return c; }, 1);
     L.enemySpawn = { x: 470, y: 150 };
   } else if (biomeIdx === 6) {
-    // lily pads drift and bob on the surface
-    const { x0, x1 } = L.pond, n = randInt(r, 4, 5), span = (x1 - x0) / n;
+    // a middle stump, then lily pads drifting and bobbing on the surface between the stumps
+    const sl = P[3], sr = P[4];
+    tryPlace(() => { const w = randInt(r, 34, 42); return mkPlat(randInt(r, 250, 390 - w), randInt(r, 254, 270), w, 400, 'stump'); }, 1, 40);
+    const x0 = sl.x + sl.w + 6, x1 = sr.x - 6, n = randInt(r, 4, 5), span = (x1 - x0) / n;
     for (let i = 0; i < n; i++) {
       const w = randInt(r, 30, 38), cx = x0 + (i + 0.5) * span + randInt(r, -6, 6), dx = (r() < 0.5 ? -1 : 1) * randInt(r, 5, 10);
       const px = clamp(cx - w / 2, x0 + 4, x1 - w - 4 - Math.max(0, dx)) , y0 = L.water.y - 4;
+      if (P.some(q => q.type === 'stump' && px < q.x + q.w + 4 && px + w + Math.abs(dx) > q.x - 4)) continue;
       const pad = mkPlat(px, y0, w, 5, 'lilypad', { dyn: true, move: { x0: px, y0, x1: clamp(px + dx, x0 + 2, x1 - w - 2), y1: y0 + 1, period: 6 + r() * 4, phase: r() }, flower: r() < 0.4 });
       P.push(pad); L.movers.push(pad);
     }
-    tryPlace(() => { const w = randInt(r, 64, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 70, 150), w, 10, 'leaf'); }, 2);
-    tryPlace(() => { const w = randInt(r, 56, 84); return mkPlat(xIn(w, 60, 580), randInt(r, 165, 228), w, 10, 'leaf'); }, 2);
-    tryPlace(() => { const w = randInt(r, 40, 60), h = randInt(r, 22, 34); const c = mkPlat(randInt(r, 24, Math.max(24, L.pond.x0 - w - 30)), 274 - h, w, h, 'boulder'); c.touch = [ground]; return c; }, 1);
-    L.enemySpawn = { x: L.pond.x1 + 40, y: 262 };
+    tryPlace(() => { const w = randInt(r, 64, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 76, 150), w, 10, 'leaf'); }, 2);
+    tryPlace(() => { const w = randInt(r, 56, 84); return mkPlat(xIn(w, 60, 580), randInt(r, 165, 222), w, 10, 'leaf'); }, 2);
+    tryPlace(() => { const w = randInt(r, 70, 100); const c = mkPlat(16, randInt(r, 110, 200), w, 11, 'branch'); c.touch = [P[0]]; return c; }, 1);
+    tryPlace(() => { const w = randInt(r, 70, 100); const c = mkPlat(624 - w, randInt(r, 110, 200), w, 11, 'branch', { flip: true }); c.touch = [P[1]]; return c; }, 1);
+    L.enemySpawn = { x: sr.x + sr.w / 2, y: sr.y - 12 };
   } else {
     // the ant hill mound sits on the sand; its hole is where the colony pours out
     const mw = randInt(r, 92, 112), mx = randInt(r, 250, 390 - mw / 2);
@@ -955,10 +963,16 @@ function generateLevel(biomeIdx, seed) {
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
   if (biomeIdx === 6) {
-    const { x0, x1 } = L.pond;
-    for (const ex of [x0, x1]) for (let i = 0; i < 4; i++) L.decor.push({ k: 'cattail', x: ex + (ex === x0 ? -14 : 4) + i * 4 + Math.floor(dr() * 3), base: ex === x0 || ex === x1 ? 276 : 290, h: 30 + Math.floor(dr() * 26), ph: dr() * TAU, front: i % 2 === 0 });
-    for (let i = 0; i < 3; i++) { const cx = x0 + 40 + dr() * (x1 - x0 - 80); for (let k = 0; k < 3; k++) L.decor.push({ k: 'cattail', x: cx + k * 4, base: 292, h: 22 + Math.floor(dr() * 20), ph: dr() * TAU, front: k === 1 }); }
-    for (let x = -20; x < 660; x += 5 + Math.floor(dr() * 6)) if (x < x0 - 4 || x > x1 + 4) L.decor.push({ k: 'grass', x, h: 6 + Math.floor(dr() * 10), ph: dr() * TAU, front: dr() < 0.4 });
+    const { x0, x1 } = L.pond, wy = L.water.y;
+    // cattail clumps in the water, avoiding the stumps
+    for (let i = 0; i < 4; i++) { const cx = 80 + dr() * 480; if (P.some(q => q.type === 'stump' && cx > q.x - 8 && cx < q.x + q.w + 8)) continue; for (let k = 0; k < 3; k++) L.decor.push({ k: 'cattail', x: cx + k * 4, base: wy + 2, h: 26 + Math.floor(dr() * 26), ph: dr() * TAU, front: k === 1 }); }
+    // tall grass blades boxing the level in at both sides (front layer sways over everything)
+    for (let x = -24; x < 40; x += 3 + Math.floor(dr() * 3)) L.decor.push({ k: 'blade', x, h: 60 + Math.floor(dr() * 170), ph: dr() * TAU, front: x > 6 && dr() < 0.6, lean: 0.25 + dr() * 0.35 });
+    for (let x = 600; x < 664; x += 3 + Math.floor(dr() * 3)) L.decor.push({ k: 'blade', x, h: 60 + Math.floor(dr() * 170), ph: dr() * TAU, front: x < 634 && dr() < 0.6, lean: -(0.25 + dr() * 0.35) });
+    // vines hanging from the canopy, some in front of the action
+    for (let i = 0; i < 16; i++) L.decor.push({ k: 'vine', x: 24 + dr() * 592, len: 30 + Math.floor(dr() * 120), ph: dr() * TAU, front: dr() < 0.35 });
+    // light shafts through gaps in the canopy
+    for (let i = 0; i < 5; i++) L.decor.push({ k: 'ray', x: 60 + i * 120 + dr() * 60, w: 14 + dr() * 22, ph: dr() * TAU });
     for (let i = 0; i < 26; i++) L.decor.push({ k: 'weed', x: x0 + 8 + dr() * (x1 - x0 - 16), h: 10 + Math.floor(dr() * 22), ph: dr() * TAU });
     for (let i = 0; i < 40; i++) L.decor.push({ k: 'pebble', x: x0 + dr() * (x1 - x0), y: 344 + dr() * 14, c: pick(dr, ['#7a6a4a', '#9a8a6a', '#5a4a32']) });
   }
@@ -973,6 +987,15 @@ function generateLevel(biomeIdx, seed) {
    ===================================================================== */
 const ART = { sky: null, scene: null, clouds: [], cloudSprites: [], level: null, bw: 0, bh: 0 };
 
+const SWAMP_TINT = { '#2f8f3a': '#1a4a22', '#4fbf43': '#2a6a2e', '#8ef06f': '#5a9a44', '#3fae3a': '#24602a', '#2f7f2b': '#1a4a1e',
+  '#8a5530': '#4a3420', '#b07342': '#6a4a2a', '#5e3519': '#2a1a0e', '#6b3f1f': '#3a2614', '#9ad0ff': '#8ab8a0' };
+/* A drawing context that swaps colours as they're set (used to darken shared platform art per biome) */
+function tintCtx(g, map) {
+  return new Proxy(g, {
+    set(t, k, v) { t[k] = (k === 'fillStyle' || k === 'strokeStyle') && map[v] ? map[v] : v; return true; },
+    get(t, k) { const v = t[k]; return typeof v === 'function' ? v.bind(t) : v; },
+  });
+}
 function buildLevelArt(L) {
   ART.level = L; ART.bw = BW; ART.bh = BH;
   const B = L.B;
@@ -980,6 +1003,7 @@ function buildLevelArt(L) {
   ART.sky = makeCanvas(BW, BH);
   let g = ART.sky.getContext('2d');
   if (L.biome === 4) { drawFactoryBackdrop(g, L); ART.clouds = []; ART.cloudSprites = []; }
+  else if (L.biome === 6) { drawSwampBackdrop(g, L); ART.clouds = []; ART.cloudSprites = []; }
   else {
   const horizon = OY + (L.biome === 2 ? 240 : 290), bandH = Math.ceil(horizon / B.sky.length);
   B.sky.forEach((c, i) => { g.fillStyle = c; g.fillRect(0, i * bandH, BW, bandH + 1); });
@@ -1029,7 +1053,7 @@ function buildLevelArt(L) {
   g = ART.scene.getContext('2d');
   g.save(); g.translate(OX, OY);
   const xL = -OX - 4, xR = BW - OX + 4;
-  if (L.biome !== 2 && L.biome !== 4) {
+  if (L.biome !== 2 && L.biome !== 4 && L.biome !== 6) {
     for (let x = Math.floor(xL / 2) * 2; x < xR; x += 2) {
       const y = Math.round(236 + 22 * Math.sin(x * 0.012 + L.biome) + 10 * Math.sin(x * 0.033 + 1));
       g.fillStyle = B.far[0]; g.fillRect(x, y, 2, 330 - y);
@@ -1083,7 +1107,8 @@ function buildLevelArt(L) {
   }
   const big = p => p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand' || p.type === 'floor';
   for (const p of L.plats) if (big(p) && !p.dyn) drawPlatform(g, p, L);
-  for (const p of L.plats) if (!big(p) && !p.dyn) drawPlatform(g, p, L);
+  const swampG = L.biome === 6 ? tintCtx(g, SWAMP_TINT) : g;   // leaves + branches in the swamp use a darker palette
+  for (const p of L.plats) if (!big(p) && !p.dyn) drawPlatform(p.type === 'leaf' || p.type === 'branch' ? swampG : g, p, L);
   for (const d of L.decor) if (d.k === 'shell') { g.fillStyle = d.c; g.fillRect(Math.round(d.x), 298, 3, 2); g.fillRect(Math.round(d.x) + 1, 297, 1, 1); }
   g.restore();
 }
@@ -1354,6 +1379,40 @@ function drawPlatform(g, p, L) {
       g.stroke();
       break;
     }
+    case 'reedwall': {
+      const yTop = -OY - 4, yBot = BH - OY + 4, left = x < 100, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4;
+      g.fillStyle = '#0e2214'; g.fillRect(xa, yTop, xb - xa, yBot - yTop);
+      for (let i = 0; i < (xb - xa) * 3; i++) {   // dense vertical blades
+        const bx = xa + Math.floor(r() * (xb - xa)), by = yTop + Math.floor(r() * (yBot - yTop)), bh = 10 + Math.floor(r() * 40);
+        g.fillStyle = pick(r, ['#1a3a1e', '#24502a', '#2f6a34', '#173020']); g.fillRect(bx, by, 1 + (r() < 0.3 ? 1 : 0), bh);
+      }
+      const edge = left ? x + w : x;
+      for (let yy = yTop; yy < yBot; yy += 2) {   // ragged inner edge of blades
+        const d = Math.floor(r() * 6);
+        g.fillStyle = pick(r, ['#3f8a3a', '#2f6a34', '#4f9a44']); g.fillRect(left ? edge - 2 - d : edge, yy, d + 2, 2);
+      }
+      break;
+    }
+    case 'canopy': {
+      const x0 = -OX - 4, x1 = BW - OX + 4, yb = y + h;
+      g.fillStyle = '#0a1a10'; g.fillRect(x0, -OY - 4, x1 - x0, yb + OY + 4);
+      for (let i = 0; i < (x1 - x0) / 2; i++) {   // leafy clumps drooping from the underside
+        const cx = x0 + r() * (x1 - x0), cy = yb - 4 + r() * 10, rr = 4 + Math.floor(r() * 7);
+        pxCircle(g, cx, cy, rr, pick(r, ['#12301a', '#1a4022', '#16361c']));
+        if (r() < 0.4) pxCircle(g, cx - 1, cy - 1, Math.max(1, rr - 3), '#24562c');
+      }
+      break;
+    }
+    case 'stump': {
+      const yb = BH - OY + 4;
+      g.fillStyle = '#3a2a18'; g.fillRect(x, y, w, yb - y);
+      for (let xx = x + 2; xx < x + w - 1; xx += 4) { g.fillStyle = r() < 0.5 ? '#2a1e10' : '#4a3620'; g.fillRect(xx, y + 4, 2, yb - y); }
+      g.fillStyle = '#1e140a'; g.fillRect(x, y, 2, yb - y); g.fillRect(x + w - 2, y, 2, yb - y);
+      pxEllipse(g, x + w / 2, y + 2, w / 2, 3, '#6a5030'); pxEllipse(g, x + w / 2, y + 2, w / 2 - 4, 2, '#8a6a40'); pxEllipse(g, x + w / 2, y + 2, 3, 1, '#6a5030');
+      g.fillStyle = '#3f8a3a'; g.fillRect(x, y - 1, Math.floor(w * 0.6), 2); g.fillStyle = '#5fae4a'; g.fillRect(x + 2, y - 2, Math.floor(w * 0.35), 1);   // moss
+      for (let i = 0; i < 6; i++) { g.fillStyle = '#3f8a3a'; g.fillRect(x + Math.floor(r() * w), y + 2 + Math.floor(r() * 20), 2, 3 + Math.floor(r() * 6)); }
+      break;
+    }
     case 'bank': {
       const left = x < 0, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4, yb = BH - OY + 4;
       g.fillStyle = '#5a3e22'; g.fillRect(xa, y, xb - xa, yb - y);
@@ -1592,50 +1651,121 @@ function drawMound(p, t) {
   pxEllipse(ctx, cx + sh, y + 1, hr, 2, '#1a0e06');
 }
 
-/* ---------- Pond (level 7): plants, water surface, lily pads ---------- */
+/* ---------- Swamp (level 7): backdrop, plants, deep water, light shafts ---------- */
+function drawSwampBackdrop(g, L) {
+  const B = L.B, bandH = Math.ceil(BH / B.sky.length);
+  B.sky.forEach((c, i) => { g.fillStyle = c; g.fillRect(0, i * bandH, BW, bandH + 1); });
+  g.save(); g.translate(OX, OY);
+  const x0 = -OX - 4, x1 = BW - OX + 4, tr = rng(L.seed ^ 61);
+  // far trunks fading into the gloom, then nearer ones
+  for (const [n, c1, c2, wmin] of [[14, '#132a1c', '#173220', 6], [8, '#0e2016', '#142a1c', 12]]) {
+    for (let i = 0; i < n; i++) {
+      const tx = x0 + tr() * (x1 - x0), tw = wmin + Math.floor(tr() * wmin);
+      g.fillStyle = c1; g.fillRect(Math.round(tx), -OY - 4, tw, 340); g.fillStyle = c2; g.fillRect(Math.round(tx) + 1, -OY - 4, 2, 340);
+      // roots flaring into the water
+      for (let k = 0; k < 3; k++) { g.fillStyle = c1; g.fillRect(Math.round(tx - 4 + k * (tw / 2)), 278 + k, 4, 14); }
+    }
+  }
+  // foliage masses hanging high up
+  for (let i = 0; i < 70; i++) { const cx = x0 + tr() * (x1 - x0), cy = 10 + tr() * 90, rr = 8 + tr() * 18; pxCircle(g, cx, cy, rr, tr() < 0.5 ? '#0e2214' : '#12281a'); }
+  // misty glow over the water
+  for (let k = 0; k < 6; k++) { g.globalAlpha = 0.05; g.fillStyle = '#b8d8b0'; g.fillRect(x0, 250 + k * 6, x1 - x0, 40 - k * 6); }
+  g.globalAlpha = 1;
+  g.restore();
+}
 function drawPondPlants(L, t, front) {
   for (const d of L.decor) {
     if (d.k === 'cattail' && !!d.front === front) {
       const sway = Math.sin(t * 1.3 + d.ph) * 3;
-      for (let i = 0; i < d.h; i++) { ctx.fillStyle = i % 5 ? '#4f8a3a' : '#3f7a2a'; ctx.fillRect(Math.round(d.x + sway * i / d.h), d.base - i, 1, 1); }
+      for (let i = 0; i < d.h; i++) { ctx.fillStyle = i % 5 ? '#3f7a2e' : '#2f6a24'; ctx.fillRect(Math.round(d.x + sway * i / d.h), d.base - i, 1, 1); }
       const hx = Math.round(d.x + sway), hy = d.base - d.h;
-      ctx.fillStyle = '#5a3418'; ctx.fillRect(hx - 1, hy, 3, 9); ctx.fillStyle = '#7a4a24'; ctx.fillRect(hx - 1, hy + 1, 1, 7);
-      ctx.fillStyle = '#4f8a3a'; ctx.fillRect(hx, hy - 4, 1, 4);
-      const lf = Math.sin(t * 1.6 + d.ph * 2) * 2;   // a long blade leaf beside the stalk
-      for (let i = 0; i < d.h * 0.7; i++) { ctx.fillStyle = '#5fae4a'; ctx.fillRect(Math.round(d.x + 2 + (sway + lf) * i / d.h + i * 0.08), d.base - i, 1, 1); }
-    } else if (d.k === 'grass' && !!d.front === front) {
-      const sway = Math.sin(t * 2 + d.ph + d.x * 0.05) * 1.5;
-      for (let i = 0; i < d.h; i++) { ctx.fillStyle = front ? '#5fd24b' : '#3fae3a'; ctx.fillRect(Math.round(d.x + sway * i / d.h), 276 - i, 1, 1); }
+      ctx.fillStyle = '#4a2a12'; ctx.fillRect(hx - 1, hy, 3, 9); ctx.fillStyle = '#6a4020'; ctx.fillRect(hx - 1, hy + 1, 1, 7);
+      ctx.fillStyle = '#3f7a2e'; ctx.fillRect(hx, hy - 4, 1, 4);
+      const lf = Math.sin(t * 1.6 + d.ph * 2) * 2;
+      for (let i = 0; i < d.h * 0.7; i++) { ctx.fillStyle = '#4f9a3a'; ctx.fillRect(Math.round(d.x + 2 + (sway + lf) * i / d.h + i * 0.08), d.base - i, 1, 1); }
+    } else if (d.k === 'blade' && !!d.front === front) {
+      // tall grass rising out of the water at the edges, leaning in and swaying
+      const sway = Math.sin(t * 0.9 + d.ph) * 4, base = L.water.y + 6;
+      for (let i = 0; i < d.h; i += 1) {
+        const k = i / d.h, bx = d.x + (d.lean * i * 0.35 + sway * k * k);
+        ctx.fillStyle = front ? (k > 0.85 ? '#6fbe4a' : i % 7 ? '#3f8a34' : '#2f6a2a') : (i % 7 ? '#24502a' : '#1a3a1e');
+        ctx.fillRect(Math.round(bx), base - i, k < 0.6 ? 2 : 1, 1);
+      }
+    } else if (d.k === 'vine' && !!d.front === front) {
+      // vines dangling from the canopy, leaves along their length
+      let px = d.x, py = 16;
+      for (let i = 0; i < d.len; i += 2) {
+        const sw = Math.sin(t * 1.1 + d.ph + i * 0.03) * (i / d.len) * 6;
+        const vx = d.x + sw;
+        ctx.fillStyle = front ? '#2f6a24' : '#1e4a1e'; ctx.fillRect(Math.round(vx), py + i, 1, 2);
+        if (i % 10 === 4) { const s = (i / 10) % 2 ? 1 : -1; ctx.fillStyle = front ? '#4f9a3a' : '#2f6a2a'; ctx.fillRect(Math.round(vx) + (s > 0 ? 1 : -3), py + i, 3, 2); ctx.fillStyle = front ? '#7cc25a' : '#3f7a2e'; ctx.fillRect(Math.round(vx) + (s > 0 ? 2 : -2), py + i, 1, 1); }
+        px = vx;
+      }
     }
   }
 }
-function drawPondUnder(L, t) {   // swaying weeds on the pond floor (drawn before fish, under the water tint)
+function drawPondUnder(L, t) {   // weeds swaying under the surface (deeper parts fade into the dark water)
   for (const d of L.decor) if (d.k === 'weed') {
-    for (let i = 0; i < d.h; i++) { const sw = Math.sin(t * 1.2 + d.ph + i * 0.18) * (i / d.h) * 4; ctx.fillStyle = i % 3 ? '#2f7a3a' : '#3f9a44'; ctx.fillRect(Math.round(d.x + sw), 346 - i, 1, 1); if (i % 6 === 3) ctx.fillRect(Math.round(d.x + sw) + 1, 346 - i, 2, 1); }
+    for (let i = 0; i < d.h; i++) { const sw = Math.sin(t * 1.2 + d.ph + i * 0.18) * (i / d.h) * 4; ctx.fillStyle = i % 3 ? '#1f5a2a' : '#2f7a34'; ctx.fillRect(Math.round(d.x + sw), 346 - i, 1, 1); if (i % 6 === 3) ctx.fillRect(Math.round(d.x + sw) + 1, 346 - i, 2, 1); }
   }
 }
 function drawPondWater(L, t, W) {
-  const wy = L.water.y, { x0, x1 } = L.pond, yb = BH - OY + 4;
-  // tinted, see-through body with depth bands
-  ctx.fillStyle = 'rgba(40,130,170,0.38)'; ctx.fillRect(x0, wy + 1, x1 - x0, yb - wy);
-  ctx.fillStyle = 'rgba(10,60,100,0.16)'; ctx.fillRect(x0, wy + 22, x1 - x0, yb - wy); ctx.fillRect(x0, wy + 44, x1 - x0, yb - wy);
-  // shimmering light lines under the surface
-  ctx.fillStyle = 'rgba(210,245,255,0.16)';
-  for (let i = 0; i < 18; i++) { const cx = x0 + ((i * 53 + t * (8 + i % 4 * 3)) % (x1 - x0)), cy = wy + 6 + (i * 23) % 50; ctx.fillRect(Math.round(cx), Math.round(cy + Math.sin(t * 2 + i) * 2), 6 + (i % 3) * 3, 1); }
-  // rippling surface line
-  for (let x = x0; x < x1; x += 2) {
-    const h = Math.round(Math.sin(x * 0.09 + t * 2.2) * 1.2 + Math.sin(x * 0.033 - t * 1.4) * 1.2);
-    ctx.fillStyle = 'rgba(60,150,200,0.7)'; ctx.fillRect(x, wy + h + 1, 2, 2);
-    ctx.fillStyle = '#c8f0ff'; ctx.fillRect(x, wy + h, 2, 1);
+  const wy = L.water.y, x0 = -OX - 4, x1 = BW - OX + 4, yb = BH - OY + 4;
+  // murky water: fairly clear at the top, darker and darker with depth
+  const gr = ctx.createLinearGradient(0, wy, 0, yb);
+  gr.addColorStop(0, 'rgba(60,120,96,0.55)'); gr.addColorStop(0.18, 'rgba(34,84,70,0.78)'); gr.addColorStop(0.5, 'rgba(14,44,40,0.92)'); gr.addColorStop(1, 'rgba(4,14,14,0.98)');
+  ctx.fillStyle = gr; ctx.fillRect(x0, wy + 1, x1 - x0, yb - wy);
+  // drifting specks and shimmer just below the surface
+  ctx.fillStyle = 'rgba(200,240,210,0.14)';
+  for (let i = 0; i < 26; i++) { const cx = x0 + ((i * 47 + t * (6 + i % 5 * 2)) % (x1 - x0)), cy = wy + 5 + (i * 13) % 26; ctx.fillRect(Math.round(cx), Math.round(cy + Math.sin(t * 2 + i) * 1.5), 4 + (i % 3) * 3, 1); }
+  // light shafts carry on a little way into the water
+  for (const d of L.decor) if (d.k === 'ray') {
+    const sx = d.x + (wy - 16) * 0.42;
+    ctx.globalAlpha = 0.07 + 0.03 * Math.sin(t * 0.7 + d.ph);
+    ctx.fillStyle = '#d8f0b0'; ctx.beginPath(); ctx.moveTo(sx, wy + 1); ctx.lineTo(sx + d.w, wy + 1); ctx.lineTo(sx + d.w + 18, wy + 40); ctx.lineTo(sx + 14, wy + 40); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
   }
-  // ripple rings: around lily pads, aiming fish, and the odd random drop
-  ctx.strokeStyle = 'rgba(220,250,255,0.55)'; ctx.lineWidth = 1;
+  // rippling surface line with glints where the light lands
+  for (let x = Math.floor(x0 / 2) * 2; x < x1; x += 2) {
+    const h = Math.round(Math.sin(x * 0.09 + t * 2.0) * 1.1 + Math.sin(x * 0.031 - t * 1.3) * 1.1);
+    ctx.fillStyle = 'rgba(30,70,56,0.8)'; ctx.fillRect(x, wy + h + 1, 2, 2);
+    let lit = false; for (const d of L.decor) if (d.k === 'ray') { const sx = d.x + (wy - 16) * 0.42; if (x > sx && x < sx + d.w) lit = true; }
+    ctx.fillStyle = lit ? '#f0ffd0' : '#9ccfa8'; ctx.fillRect(x, wy + h, 2, 1);
+  }
+  // ripple rings: around lily pads, stumps, aiming fish and the odd drip
+  ctx.strokeStyle = 'rgba(200,240,210,0.45)'; ctx.lineWidth = 1;
   const ring = (cx, rr) => { ctx.beginPath(); ctx.ellipse(Math.round(cx) + 0.5, wy + 0.5, rr, Math.max(1, rr * 0.22), 0, 0, TAU); ctx.stroke(); };
   for (const p of L.plats) if (p.type === 'lilypad') ring(p.x + p.w / 2, p.w / 2 + 3 + (Math.sin(t * 2 + p.x) + 1) * 1.5);
+  for (const p of L.plats) if (p.type === 'stump') ring(p.x + p.w / 2, p.w / 2 + 3 + (Math.sin(t * 1.4 + p.x) + 1) * 1.2);
   if (W) for (const e of W.enemies) if (e.type === 'archer' && e.alive && e.surfaced) { const k = (t * 1.5) % 1; ring(e.x, 4 + k * 12); }
-  for (let i = 0; i < 4; i++) { const k = (t * 0.5 + i * 0.25) % 1, cx = x0 + 20 + ((i * 97 + Math.floor(t * 0.5 + i * 0.25) * 61) % (x1 - x0 - 40)); ctx.globalAlpha = 1 - k; ring(cx, 2 + k * 14); ctx.globalAlpha = 1; }
-  // lily pads float on top of the water
+  for (let i = 0; i < 5; i++) { const k = (t * 0.5 + i * 0.2) % 1, cx = 40 + ((i * 97 + Math.floor(t * 0.5 + i * 0.2) * 61) % 560); ctx.globalAlpha = 1 - k; ring(cx, 2 + k * 14); ctx.globalAlpha = 1; }
+  // low mist drifting over the surface
+  for (let i = 0; i < 7; i++) {
+    const mx = ((i * 120 + t * (5 + i)) % 760) - 60;
+    ctx.globalAlpha = 0.07; pxEllipse(ctx, mx, wy - 4 - (i % 3) * 3, 50 + (i % 3) * 16, 4, '#d8ecd0'); ctx.globalAlpha = 1;
+  }
   for (const p of L.plats) if (p.type === 'lilypad') drawLilyPad(p, t);
+}
+/* Sunbeams slanting down through gaps in the canopy, drawn over everything */
+function drawSwampLight(L, t) {
+  const wy = L.water.y;
+  ctx.save(); ctx.globalCompositeOperation = 'lighter';
+  for (const d of L.decor) if (d.k === 'ray') {
+    const a = 0.055 + 0.03 * Math.sin(t * 0.6 + d.ph) + 0.015 * Math.sin(t * 2.3 + d.ph * 3);
+    const gr = ctx.createLinearGradient(0, 16, 0, wy);
+    gr.addColorStop(0, 'rgba(240,255,190,' + (a * 2.2).toFixed(3) + ')'); gr.addColorStop(1, 'rgba(240,255,190,' + (a * 0.6).toFixed(3) + ')');
+    ctx.fillStyle = gr;
+    const dx = (wy - 16) * 0.42;
+    ctx.beginPath(); ctx.moveTo(d.x, 16); ctx.lineTo(d.x + d.w * 0.6, 16); ctx.lineTo(d.x + dx + d.w, wy); ctx.lineTo(d.x + dx, wy); ctx.closePath(); ctx.fill();
+    // motes drifting in the beam
+    for (let i = 0; i < 6; i++) {
+      const k = ((t * 0.05 + i / 6 + d.ph) % 1), my = 16 + k * (wy - 20), mx = d.x + dx * k + d.w * (0.2 + 0.6 * ((i * 0.37 + d.ph) % 1)) + Math.sin(t + i) * 2;
+      ctx.fillStyle = 'rgba(255,255,210,0.5)'; ctx.fillRect(Math.round(mx), Math.round(my), 1, 1);
+    }
+  }
+  // canopy glints where the light breaks through
+  for (const d of L.decor) if (d.k === 'ray') { ctx.globalAlpha = 0.5 + 0.3 * Math.sin(t * 1.7 + d.ph); pxEllipse(ctx, d.x + d.w * 0.3, 15, d.w * 0.4, 2, '#d8f0a0'); }
+  ctx.restore(); ctx.globalAlpha = 1;
 }
 function drawLilyPad(p, t) {
   const cx = p.x + p.w / 2, cy = p.y + 2, rx = p.w / 2 + 2;
@@ -3849,7 +3979,7 @@ class Frog extends Lizard {
     this.y = WATER_Y - 3 + Math.sin(T * 3) * 0.8; this.vy = 0;
     // paddle to the nearest lily pad or bank
     let best = null, bd = Infinity;
-    for (const p of PLATS) if (p.y >= WATER_Y - 18 && p.y <= WATER_Y + 2) { const cx = clamp(this.x, p.x + 4, p.x + p.w - 4), dd = Math.abs(cx - this.x); if (dd < bd) { bd = dd; best = p; } }
+    for (const p of PLATS) if (p.y >= WATER_Y - 40 && p.y <= WATER_Y + 2 && p.h < 900) { const cx = clamp(this.x, p.x + 4, p.x + p.w - 4), dd = Math.abs(cx - this.x); if (dd < bd) { bd = dd; best = p; } }
     if (!frozen && best) {
       const cx = clamp(this.x, best.x + 4, best.x + best.w - 4);
       this.x = approach(this.x, cx, 45 * W.D.speed * k * dt); this.facing = cx > this.x ? 1 : cx < this.x ? -1 : this.facing; this.walk += dt * 20;
@@ -4137,7 +4267,7 @@ class World {
     ctx.globalAlpha = 1;
     drawWater(this.L, T, this);
     drawWheat(this.L, T, true);
-    if (this.L.pond) drawPondPlants(this.L, T, true);
+    if (this.L.pond) { drawPondPlants(this.L, T, true); drawSwampLight(this.L, T); }
     for (const f of this.floaters) { ctx.globalAlpha = clamp(f.life * 2, 0, 1); drawText(f.text, f.x, f.y, 1, f.color, 'center', '#140c26'); }
     ctx.globalAlpha = 1;
     // mouse crosshair
@@ -4156,6 +4286,7 @@ class World {
   }
   drawAmbient() {
     for (const a of this.ambient) {
+      if (this.biome === 6) { const gl = 0.5 + 0.5 * Math.sin(a.t * 3); if (gl > 0.3) { ctx.globalAlpha = gl; ctx.fillStyle = '#d8ff70'; ctx.fillRect(Math.round(a.x), Math.round(Math.min(a.y, 270)), 1, 1); ctx.globalAlpha = gl * 0.3; pxCircle(ctx, a.x, Math.min(a.y, 270), 2, '#d8ff70'); ctx.globalAlpha = 1; } continue; }
       if (this.biome === 5) { const gx = Math.round(((a.x + this.time * 40 + a.t * 7) % 680) - 20), gy = Math.round(a.y); ctx.globalAlpha = 0.5; ctx.fillStyle = '#fff0c8'; ctx.fillRect(gx, gy, 2, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 4) { ctx.globalAlpha = 0.25 + 0.25 * Math.sin(a.t * 2); ctx.fillStyle = '#cfe0ff'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; continue; }
       if (this.biome === 3) { if (a.x > 330 && a.y > 80) { ctx.globalAlpha = 0.35 + 0.3 * Math.sin(a.t * 2); ctx.fillStyle = '#ffe3a0'; ctx.fillRect(Math.round(a.x), Math.round(a.y), 1, 1); ctx.globalAlpha = 1; } continue; }
@@ -5915,7 +6046,7 @@ const VS = {
     else info = 'THE MATCH CAN START ONCE A SECOND PLAYER JOINS';
     drawText(info, BW / 2, y0 + ch + 12, 1, col, 'center', '#140c26');
     if (this.sub === 'wait' && this.autoT >= 0 && this.autoT <= 10) drawText(String(Math.ceil(this.autoT)), BW / 2, y0 + ch + 26, 3, '#ffd23f', 'center', null, '#140c26');
-    drawText('7 ROUNDS, FIELD TO POND.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
+    drawText('7 ROUNDS, FIELD TO SWAMP.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
     const rep = this.sub === 'wait' && this.net ? this.net.report() : this.searchNet ? this.searchNet.report() : '';
     drawText(rep, BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.quickButtons(), uiSel);
@@ -5975,7 +6106,7 @@ const VS = {
       else info = 'WAITING FOR THE HOST TO START';
       drawText(info, BW / 2, y0 + ch + 10, 1, '#ffffff', 'center', '#140c26');
     }
-    drawText('7 ROUNDS, FIELD TO POND.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
+    drawText('7 ROUNDS, FIELD TO SWAMP.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
     if (this.net) drawText(this.net.report(), BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.lobbyButtons(), uiSel);
     if (this.msgT > 0) drawText(this.msg, BW / 2, y0 + ch + 38, 1, '#7df06a', 'center', '#140c26');
@@ -6290,8 +6421,8 @@ Screens.practice = {
       const bandH = Math.ceil((b.h - 30) / B.sky.length);
       B.sky.forEach((c, k) => { ctx.fillStyle = c; ctx.fillRect(x, y + k * bandH, b.w, bandH); });
       const gy = y + b.h - 30;
-      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : b.card === 5 ? '#f2d9a0' : b.card === 6 ? '#9ad8ff' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
-      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : b.card === 5 ? '#d9a866' : b.card === 6 ? '#2a7fc9' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
+      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : b.card === 5 ? '#f2d9a0' : b.card === 6 ? '#5a9a7a' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
+      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : b.card === 5 ? '#d9a866' : b.card === 6 ? '#1a3a32' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
       const ex = x + b.w / 2, ey = gy - 8;
       if (b.card === 0) drawLizard(ex, ey + 2, 0, -1, T * 10, Math.sin(T * 2) * 0.2, {});
       else if (b.card === 1) { drawHive(ex, ey - 22, {}); drawBee(ex + 22, ey - 18 + Math.sin(T * 5) * 3, -1, {}); }

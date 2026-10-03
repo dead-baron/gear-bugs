@@ -151,7 +151,7 @@ class Frog extends Lizard {
     this.y = WATER_Y - 3 + Math.sin(T * 3) * 0.8; this.vy = 0;
     // paddle to the nearest lily pad or bank
     let best = null, bd = Infinity;
-    for (const p of PLATS) if (p.y >= WATER_Y - 18 && p.y <= WATER_Y + 2) { const cx = clamp(this.x, p.x + 4, p.x + p.w - 4), dd = Math.abs(cx - this.x); if (dd < bd) { bd = dd; best = p; } }
+    for (const p of PLATS) if (p.y >= WATER_Y - 40 && p.y <= WATER_Y + 2 && p.h < 900) { const cx = clamp(this.x, p.x + 4, p.x + p.w - 4), dd = Math.abs(cx - this.x); if (dd < bd) { bd = dd; best = p; } }
     if (!frozen && best) {
       const cx = clamp(this.x, best.x + 4, best.x + best.w - 4);
       this.x = approach(this.x, cx, 45 * W.D.speed * k * dt); this.facing = cx > this.x ? 1 : cx < this.x ? -1 : this.facing; this.walk += dt * 20;
