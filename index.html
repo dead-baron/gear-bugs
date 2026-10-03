@@ -56,7 +56,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-03T20:11:06Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-03T20:47:10Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -4059,7 +4059,7 @@ class Frog extends Lizard {
     if (this.swim) this.updateSwim(dt, W, t, k, frozen);
     else if (this.state === 'air') {
       crawlerFly(this, dt, frogAllow, W);
-      if (this.state === 'stuck') { SFX.play('land', 0.1); burst(W, this.x, this.y + this.r, 6, ['#5fae58', '#c8d890'], 40, 0.3, 80, 1); }
+      if (this.state === 'stuck') { this.swimTotal = 0; SFX.play('land', 0.1); burst(W, this.x, this.y + this.r, 6, ['#5fae58', '#c8d890'], 40, 0.3, 80, 1); }
       if (this.y + this.r * 0.4 >= WATER_Y) { this.swim = true; this.state = 'swim'; this.plat = null; this.vy = 0; this.y = WATER_Y - 3; SFX.play('splash'); burst(W, this.x, WATER_Y, 16, ['#ffffff', '#9ad8ff', '#3b97d9'], 110, 0.6, 300); }
     } else if (!frozen && !busy && t) {
       // a slow waddle toward the nearest spider...
@@ -4097,29 +4097,66 @@ class Frog extends Lizard {
     // squashing landing / body slam
     if (this.hurtCD <= 0 && (this.state === 'air' || this.swim)) for (const tg of W.targets()) if (dist(this.x, this.y, tg.x, tg.y) < this.r + tg.r) { W.hurt(tg, 'hit', this); this.hurtCD = 1; }
   }
+  /* Swimming: paddle to the near edge of a perch (never under or inside it), then leap up onto it.
+     Safety nets: a big vertical leap if it can't get out after a few seconds, and a last-resort
+     hop onto the nearest stump so it can never be stranded in the water. */
   updateSwim(dt, W, t, k, frozen) {
-    this.y = WATER_Y - 3 + Math.sin(T * 3) * 0.8; this.vy = 0; this.swimT = (this.swimT || 0) + dt;
+    const sy = WATER_Y - 3, r = this.r;
+    this.y = sy + Math.sin(T * 3) * 0.8; this.vy = 0;
+    this.swimT = (this.swimT || 0) + dt; this.swimTotal = (this.swimTotal || 0) + dt;
+    const blocks = x => PLATS.find(p => x + r > p.x && x - r < p.x + p.w && sy + r > p.y && sy - r < p.y + p.h);
+    // never sit inside something: pop out to its nearer side
+    const ov = blocks(this.x);
+    if (ov) { const L = ov.x - r - 1, R = ov.x + ov.w + r + 1; this.x = Math.abs(this.x - L) < Math.abs(R - this.x) ? L : R; }
     if (frozen) return;
-    // pick a perch to climb back onto: a stump, lily pad or low leaf, close enough to jump to
-    let best = null, bd = Infinity;
-    for (const p of PLATS) {
-      if (!(p.type === 'stump' || p.type === 'lilypad' || p.type === 'swampleaf' || p.type === 'branch')) continue;
-      if (p.y > WATER_Y || p.y < WATER_Y - 150) continue;
-      const cx = clamp(this.x, p.x + 6, p.x + p.w - 6), dd = Math.abs(cx - this.x) + (WATER_Y - p.y) * 0.6;
-      if (dd < bd) { bd = dd; best = p; }
+    // choose a perch: approach point beside it, landing point just inside its top edge
+    if (!this.perch || !PLATS.includes(this.perch.p) || this.swimT > 3) {
+      let best = null, bd = Infinity;
+      for (const p of PLATS) {
+        if (!(p.type === 'stump' || p.type === 'lilypad' || p.type === 'swampleaf' || p.type === 'branch')) continue;
+        if (p.y > WATER_Y || p.y < WATER_Y - 140 || p.w < 20) continue;
+        for (const side of [-1, 1]) {
+          const ax = side < 0 ? p.x - r - 7 : p.x + p.w + r + 7;
+          if (ax < 16 + r || ax > 624 - r) continue;
+          // the swim there must be clear
+          let clear = true;
+          for (let x = this.x; Math.abs(x - ax) > 3; x += Math.sign(ax - x) * 3) if (blocks(x)) { clear = false; break; }
+          if (!clear || blocks(ax)) continue;
+          const cost = Math.abs(ax - this.x) + (WATER_Y - p.y) * 0.5 + (this.perch && this.perch.p === p && this.swimT > 3 ? 400 : 0);
+          if (cost < bd) { bd = cost; best = { p, ax, lx: side < 0 ? p.x + 9 : p.x + p.w - 9 }; }
+        }
+      }
+      this.perch = best; if (this.swimT > 3) this.swimT = 0.5;
     }
-    if (best) {
-      const cx = clamp(this.x, best.x + 6, best.x + best.w - 6), reach = best.type === 'lilypad' ? 4 : 26;
-      if (Math.abs(cx - this.x) > reach) { const dir = Math.sign(cx - this.x); this.x += dir * 45 * W.D.speed * Math.max(0.4, k) * dt; this.facing = dir; this.walk += dt * 20; }
-      else if (this.swimT > 0.5) {
-        // spring up out of the water onto it
-        this.swim = false; this.swimT = 0; this.y -= 4;
-        jumpToward(this, cx, best.y - this.r - 2, 460, 0.35, 0.75, 220);
-        SFX.play('splash'); burst(W, this.x, WATER_Y, 12, ['#ffffff', '#9ad8ff'], 80, 0.5, 260);
+    const P = this.perch;
+    if (P) {
+      const dx = P.ax - this.x;
+      if (Math.abs(dx) > 3) {
+        const step = Math.sign(dx) * Math.min(Math.abs(dx), 48 * W.D.speed * Math.max(0.45, k) * dt);
+        if (!blocks(this.x + step)) this.x += step; else this.perch = null;
+        this.facing = Math.sign(dx); this.walk += dt * 20;
+      } else if (this.swimT > 0.35) {
+        // ballistic leap: rise clear above the top edge, come down just inside it
+        const top = P.p.y - r - 1, rise = Math.max(14, this.y - top + 16);
+        const vy = -Math.sqrt(2 * G * rise), tUp = -vy / G, tDown = Math.sqrt(2 * (rise - (this.y - top)) / G);
+        this.leapOut(W, (P.lx - this.x) / (tUp + Math.max(0.05, tDown)), vy);
         return;
       }
     }
-    if (t && this.jumpCD <= 0 && k > 0.35 && this.swimT > 0.8) { this.swim = false; this.swimT = 0; jumpToward(this, t.x, t.y - 6, 520 * k, 0.6, 1.2, 280); this.y -= 4; this.jumpCD = (3.5 + Math.random() * 2) / W.D.aggro; SFX.play('splash'); }
+    // stuck for a while with nowhere to go: jump straight up and hope to catch something
+    if (this.swimT > 2.6 && !P) { this.leapOut(W, (320 - this.x) * 0.3, -430); return; }
+    // last resort: never stranded - hop onto the nearest stump
+    if (this.swimTotal > 7) {
+      const st = PLATS.filter(p => p.type === 'stump').sort((a, b) => Math.abs(a.x + a.w / 2 - this.x) - Math.abs(b.x + b.w / 2 - this.x))[0];
+      if (st) { burst(W, this.x, WATER_Y, 14, ['#ffffff', '#9ad8ff'], 90, 0.5, 260); this.swim = false; this.swimTotal = 0; this.x = st.x + st.w / 2; this.y = st.y - r; attachTo(this, st); this.state = 'stuck'; SFX.play('splash'); return; }
+    }
+    if (t && this.jumpCD <= 0 && k > 0.35 && this.swimT > 0.8) { this.leapOut(W, 0, 0, t); }
+  }
+  leapOut(W, vx, vy, t) {
+    this.swim = false; this.swimT = 0; this.perch = null; this.y -= 4; this.noStickT = 0;
+    if (t) { jumpToward(this, t.x, t.y - 6, 520 * this.slowK(), 0.6, 1.2, 280); this.jumpCD = (3.5 + Math.random() * 2) / W.D.aggro; }
+    else { this.state = 'air'; this.plat = null; this.vx = vx; this.vy = vy; }
+    SFX.play('splash'); burst(W, this.x, WATER_Y, 12, ['#ffffff', '#9ad8ff'], 80, 0.5, 260);
   }
   frogTongue(dt, W, t) {
     if (this.windup > 0) {
