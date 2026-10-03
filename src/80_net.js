@@ -9,9 +9,9 @@
              hostleft, matched, error, status)
    ===================================================================== */
 const NET = {
-  APP_ID: 'gear-bugs-v1',
+  APP_ID: 'gear-bugs-v2',          // v2: 5-round matches (older builds can't play round 5)
   CODE_CHARS: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',
-  POOL_ROOM: 'quick-match-pool-v1',
+  POOL_ROOM: 'quick-match-pool-v2',
   TRYSTERO_URLS: ['https://cdn.jsdelivr.net/npm/trystero@0.25.4/nostr/+esm', 'https://esm.run/trystero@0.25.4'],
   RELAY_PROBES: ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://nostr.mom'],
 };

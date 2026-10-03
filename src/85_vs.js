@@ -10,13 +10,14 @@
      applied counts match. Shots replay from sh counters.
    - Positions are normalized 0..1e4 over REF_W x REF_H.
    ===================================================================== */
-const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, elim: 50 };
+const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, elim: 50 };
+const VS_ROUNDS = 5;                  // Field > Meadow > Island > Barn > Factory
 const VS_ROUND_TIME = 100, VS_INTRO = 3.5, VS_RESULT = 5;
 const SLOT_COLORS = [0, 1, 2, 4];
 const TEAM_NAMES = ['RED TEAM', 'BLUE TEAM'], TEAM_COLORS = ['#ff4d5e', '#4da3ff'];
 const nX = x => Math.round(clamp(x, -200, REF_W + 200) / REF_W * 1e4), nY = y => Math.round(clamp(y, -200, REF_H + 200) / REF_H * 1e4);
 const dX = v => v / 1e4 * REF_W, dY = v => v / 1e4 * REF_H;
-const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5 };
+const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6 };
 const VS_DIFF = Object.assign({}, DIFFS[1], { beeMax: 2, freeze: 6 });
 
 const VS = {
@@ -224,7 +225,7 @@ const VS = {
     if (this.net) this.net.matchStarted = true;
     this.effectiveStyles();
     this.scores = [0, 1, 2, 3].map(() => this.blankScore());
-    this.seeds = [0, 1, 2, 3].map(() => (Math.random() * 0xFFFFFFFF) >>> 0);
+    this.seeds = Array.from({ length: VS_ROUNDS }, () => (Math.random() * 0xFFFFFFFF) >>> 0);
     this.rematchClosed = false;
     this.beginRound(0);
     this.sub = 'match';
@@ -259,7 +260,7 @@ const VS = {
       this.flyT = 1;
     }
     this.banner = meR.spec ? { text: 'SPECTATING', sub: 'YOU JOIN AT THE START OF THE NEXT ROUND', t: 3, max: 3, color: '#9ad0ff' }
-                           : { text: 'ROUND ' + (rn + 1) + '/4', sub: BIOMES[rn].name + ' - FIRST TO 5 FLIES GETS THE POWER', t: VS_INTRO, max: VS_INTRO, color: '#ffd23f' };
+                           : { text: 'ROUND ' + (rn + 1) + '/' + VS_ROUNDS, sub: BIOMES[rn].name + ' - FIRST TO 5 FLIES GETS THE POWER', t: VS_INTRO, max: VS_INTRO, color: '#ffd23f' };
     SFX.play('round');
   },
   spawnHazard(rn) {
@@ -267,8 +268,11 @@ const VS = {
     if (rn === 0) W.enemies.push(new Lizard(320, L.spawns[0].y));
     else if (rn === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y, { invulnerable: true }));
     else if (rn === 2) W.enemies.push(new Gecko(320, L.spawns[0].y));
-    else W.enemies.push(new Widow(L.enemySpawn.x, L.enemySpawn.y, { speedMul: 0.75, plat: L.enemySpawn.plat }));
+    else if (rn === 3) W.enemies.push(new Widow(L.enemySpawn.x, L.enemySpawn.y, { speedMul: 0.75, plat: L.enemySpawn.plat }));
+    else W.enemies.push(new LongLegs(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF, { legs: 4 }));
   },
+  /* seconds since this round's intro began - drives the factory lifts identically for everyone */
+  roundClock() { return this.phase === 'intro' ? VS_INTRO - this.phaseT : this.phase === 'play' ? VS_INTRO + VS_ROUND_TIME - this.phaseT : undefined; },
   rules() {
     const V = this;
     return {
@@ -295,6 +299,7 @@ const VS = {
         SFX.play('bite'); floater(V.W, victim.x, victim.y - 16, 'CHOMP!', '#ffd23f');
       },
       onEnemyBite(e, sp) { if (V.isHost && sp.powered && e.alive && e.type !== 'hive') e.defeat(V.W, sp.slot); },
+      onBossPhase(e, what, bySlot) { if (V.isHost && what === 'leg' && bySlot !== undefined && bySlot >= 0) V.addPts(bySlot, VS_PTS.leg); },
       onEnemyDefeated(e, bySlot) {
         if (!V.isHost) return;
         if (bySlot !== undefined && bySlot >= 0) V.addPts(bySlot, VS_PTS[e.type] || 30, 'npc');
@@ -359,7 +364,7 @@ const VS = {
       for (const r of this.respawns) { r.t -= dt; if (r.t <= 0) { r.done = true; this.spawnHazard(this.rn); } }
       this.respawns = this.respawns.filter(r => !r.done);
     } else if (this.phase === 'result' && this.phaseT <= 0) {
-      if (this.rn < 3) this.beginRound(this.rn + 1);
+      if (this.rn < VS_ROUNDS - 1) this.beginRound(this.rn + 1);
       else { this.phase = 'final'; this.phaseT = 60; this.finalT = 0; SFX.play('complete'); track('match_end', { mode: this.mode, humans: this.humans().length }); }
     }
   },
@@ -425,7 +430,7 @@ const VS = {
       w.fl = this.W.flies.filter(f => f.state === 'free').map(f => [f.id, nX(f.x), nY(f.y), f.heart ? 1 : 0]);
       w.en = this.W.enemies.filter(e => e.alive).map(e => [e.id, ENEMY_CODES[e.type], nX(e.x), nY(e.y), Math.round((e.drawAngle || 0) * 100), e.facing || 1,
         Math.round(e.frozenT * 10), (e.windup > 0 ? 1 : 0) | (e.tongueT >= 0 || e.windup > 0 || e.breathT > 0 ? 2 : 0) | (e.state === 'air' ? 4 : 0) | (e.invisible ? 8 : 0) | (e.breathT > 0 ? 16 : 0) | (e.state === 'fall' ? 32 : 0) | (e.descending ? 64 : 0),
-        Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100), Math.round((e.spawnT || 0) * 10)]);
+        Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100), Math.round((e.spawnT || 0) * 10), e.netExtra ? e.netExtra() : 0]);
       w.b = [];
       for (const { body } of this.bots.values()) { const bp = this.presenceOf(body); bp.id = body.id; w.b.push(bp); }
       w.nh = this.npcHits;
@@ -528,13 +533,14 @@ const VS = {
       let e = W.enemies.find(q => q.netId === id);
       if (!e) {
         const x = dX(a[2]), y = dY(a[3]);
-        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : new Bee(x, y, null);
+        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : new Bee(x, y, null);
         e.mirror = true; e.netId = id; e.x = x; e.y = y; W.enemies.push(e);
       }
       e.tx = dX(a[2]); e.ty = dY(a[3]); e.drawAngle = a[4] / 100; e.facing = a[5]; e.frozenT = a[6] / 10;
       const fl = a[7];
       e.windup = fl & 1 ? 0.1 : 0; e.breathT = fl & 16 ? 0.1 : 0; e.state = fl & 32 ? 'fall' : fl & 4 ? 'air' : 'stuck'; e.invisible = !!(fl & 8); e.descending = !!(fl & 64);
       e.tongueAng = a[8] / 100; e.netExt = a[9]; e.headRel = a[10] / 100; e.spawnT = (a[11] || 0) / 10; e.alive = true;
+      if (a[12] && e.applyNetExtra) e.applyNetExtra(a[12], W);
     }
     W.enemies = W.enemies.filter(e => eseen.has(e.netId));
     // bots (host-simulated) appear as remote spiders
@@ -578,6 +584,7 @@ const VS = {
     if (!this.W || this.sub === 'wait') return;
     const W = this.W; W.activate();
     if (this.isHost) this.hostPhaseTick(dt);
+    W.moverTarget = this.roundClock();
     const canMove = this.phase === 'play';
     W.aim = canMove ? c.aim : null;
     W.step(dt, s => {
@@ -593,7 +600,7 @@ const VS = {
       // remote players biting frozen NPCs
       for (const rs of W.remotes.values()) {
         if (!rs.alive || !rs.powered) continue;
-        for (const e of W.enemies) if (e.alive && e.biteable() && e.type !== 'hive' && dist(rs.x, rs.y, e.x, e.y) < rs.r + e.r + 6) e.defeat(W, rs.slot);
+        for (const e of W.enemies) if (e.alive && e.type !== 'hive' && (e.biteCheck ? e.biteCheck(rs) : e.biteable() && dist(rs.x, rs.y, e.x, e.y) < rs.r + e.r + 6)) e.defeat(W, rs.slot);
       }
     }
     if (this.me) this.me.flies = this.scores[this.mySlot] ? this.scores[this.mySlot].fl : this.me.flies;
@@ -651,7 +658,7 @@ const VS = {
       else drawText('W' + sc.wins, x + cw - 6, 17, 1, '#bba8ff', 'right');
       x += cw;
     }
-    const label = 'ROUND ' + (this.rn + 1) + '/4  ' + BIOMES[this.rn].name + (this.phase === 'play' ? '  ' + fmtTime(this.phaseT) : '');
+    const label = 'ROUND ' + (this.rn + 1) + '/' + VS_ROUNDS + '  ' + BIOMES[this.rn].name + (this.phase === 'play' ? '  ' + fmtTime(this.phaseT) : '');
     drawText(label, BW / 2, 33, 1, this.phase === 'play' && this.phaseT < 10 ? '#ff5a7a' : '#ffffff', 'center', '#140c26');
     // my status
     const me = this.me;
@@ -674,7 +681,7 @@ const VS = {
     dim(0.35);
     drawText(rr.res, BW / 2, BH / 2 - 40, 3, rr.team >= 0 ? '#ffd23f' : '#ffffff', 'center', null, '#140c26');
     drawText(rr.why, BW / 2, BH / 2 - 8, 1, '#ffffff', 'center', '#140c26');
-    drawText(this.rn < 3 ? 'NEXT: ' + BIOMES[this.rn + 1].name : 'FINAL RESULTS NEXT', BW / 2, BH / 2 + 10, 1, '#bba8ff', 'center', '#140c26');
+    drawText(this.rn < VS_ROUNDS - 1 ? 'NEXT: ' + BIOMES[this.rn + 1].name : 'FINAL RESULTS NEXT', BW / 2, BH / 2 + 10, 1, '#bba8ff', 'center', '#140c26');
   },
   leaderboard() {
     return this.roster.map(r => ({ r, s: this.scores[r.slot] })).sort((a, b) => b.s.wins - a.s.wins || b.s.pts - a.s.pts);
@@ -757,7 +764,7 @@ const VS = {
     else info = 'THE MATCH CAN START ONCE A SECOND PLAYER JOINS';
     drawText(info, BW / 2, y0 + ch + 12, 1, col, 'center', '#140c26');
     if (this.sub === 'wait' && this.autoT >= 0 && this.autoT <= 10) drawText(String(Math.ceil(this.autoT)), BW / 2, y0 + ch + 26, 3, '#ffd23f', 'center', null, '#140c26');
-    drawText('4 ROUNDS: FIELD > MEADOW > ISLAND > BARN.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
+    drawText('5 ROUNDS: FIELD > MEADOW > ISLAND > BARN > FACTORY.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
     const rep = this.sub === 'wait' && this.net ? this.net.report() : this.searchNet ? this.searchNet.report() : '';
     drawText(rep, BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.quickButtons(), uiSel);
@@ -817,7 +824,7 @@ const VS = {
       else info = 'WAITING FOR THE HOST TO START';
       drawText(info, BW / 2, y0 + ch + 10, 1, '#ffffff', 'center', '#140c26');
     }
-    drawText('4 ROUNDS: FIELD > MEADOW > ISLAND > BARN.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
+    drawText('5 ROUNDS: FIELD > MEADOW > ISLAND > BARN > FACTORY.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
     if (this.net) drawText(this.net.report(), BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.lobbyButtons(), uiSel);
     if (this.msgT > 0) drawText(this.msg, BW / 2, y0 + ch + 38, 1, '#7df06a', 'center', '#140c26');
@@ -846,7 +853,7 @@ class BotBrain {
     this.lx = b.x; this.ly = b.y;
     // danger: flee hazards
     let danger = null;
-    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : 50)) danger = e;
+    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : 50)) danger = e;
     const rivals = W.allSpiders().filter(o => o !== b && o.alive && o.team !== b.team);
     let target = null, mode = '';
     if (b.powered) {

@@ -13,13 +13,13 @@
 const LL = { REACH: 230, HIP: 7, STRIKE_RANGE: 150, AGGRO: 120, BALL_R: 11 };
 
 class LongLegs extends Enemy {
-  constructor(x, y, D) {
+  constructor(x, y, D, opts = {}) {
     super('dll', x, y);
     this.r = 11; this.hitR = 14; this.phase = 'legs';
     this.vx = 0; this.vy = 0; this.mode = 'stalk'; this.bootT = 1.8;
     this.relocT = 5; this.reloc = null; this.strikeCD = 2.5; this.fireCD = 4; this.eyeA = Math.PI;
     this.rot = 0; this.jumpCD = 1.5; this.grounded = false; this.debris = []; this.hurtCD = 0;
-    const n = D.hell ? 8 : D.speed < 0.9 ? 4 : 6;
+    const n = opts.legs || (D.hell ? 8 : D.speed < 0.9 ? 4 : 6);
     this.maxLegs = n; this.legs = [];
     for (let i = 0; i < n; i++) {
       const a = -Math.PI / 2 + (i + 0.5) / n * TAU;          // spread all the way round
@@ -114,10 +114,10 @@ class LongLegs extends Enemy {
     return false;
   }
   defeat(W, by) {
-    if (this.phase === 'legs') { if (this.biteLeg) this.tearOff(W, this.biteLeg); this.biteLeg = null; return; }
+    if (this.phase === 'legs') { if (this.biteLeg) this.tearOff(W, this.biteLeg, by); this.biteLeg = null; return; }
     super.defeat(W, by);
   }
-  tearOff(W, leg) {
+  tearOff(W, leg, by) {
     const i = this.legs.indexOf(leg);
     if (i < 0) return;
     const [[hx, hy, kx, ky], [, , fx, fy]] = this.legSegs(leg);
@@ -133,8 +133,8 @@ class LongLegs extends Enemy {
     if (this.legs.length) {
       floater(W, this.x, this.y - 24, this.legs.length + (this.legs.length === 1 ? ' LEG LEFT' : ' LEGS LEFT'), '#ff8c42');
       this.relocT = 0; this.flee = true;    // scuttle away to regroup
-      if (W.rules.onBossPhase) W.rules.onBossPhase(this, 'leg');
-    } else this.startBall(W);
+      if (W.rules.onBossPhase) W.rules.onBossPhase(this, 'leg', by);
+    } else { if (W.rules.onBossPhase) W.rules.onBossPhase(this, 'leg', by); this.startBall(W); }
   }
   startBall(W) {
     this.phase = 'ball'; this.r = LL.BALL_R; this.hitR = 14; this.vx = (Math.random() - 0.5) * 60; this.vy = -60; this.grounded = false; this.jumpCD = 1.4;
@@ -143,8 +143,34 @@ class LongLegs extends Enemy {
     if (W.rules.onBossPhase) W.rules.onBossPhase(this, 'ball');
   }
   /* ---------- simulation ---------- */
+  /* ---------- VS network mirror (host simulates, guests draw) ---------- */
+  netExtra() {
+    const a = [this.phase === 'ball' ? 1 : 0, Math.round(this.rot * 100), Math.round(this.eyeA * 100), (this.mode === 'chase' ? 1 : 0) | (this.bootT > 0 ? 2 : 0), this.maxLegs];
+    for (const l of this.legs) a.push(Math.round(l.a * 100), nX(l.fx), nY(l.fy), (l.st === 'windup' ? 1 : 0) | (l.st === 'strike' || l.st === 'hold' ? 2 : 0), Math.round(l.webT * 10));
+    return a;
+  }
+  applyNetExtra(a, W) {
+    const ball = a[0] === 1;
+    if (ball && this.phase !== 'ball') { this.phase = 'ball'; this.r = LL.BALL_R; burst(W, this.x, this.y, 30, ['#ffd23f', '#ff8a00', '#ffffff'], 150, 0.8); SFX.play('shriek'); }
+    this.rot = a[1] / 100; this.eyeA = a[2] / 100; this.mode = a[3] & 1 ? 'chase' : 'stalk'; this.bootT = a[3] & 2 ? 1 : 0; this.maxLegs = a[4];
+    const n = (a.length - 5) / 5;
+    if (n < this.legs.length && this.netLegs) { burst(W, this.x, this.y, 18, ['#ffd23f', '#ff8a00', '#ffffff', '#9aa4b4'], 120, 0.6); SFX.play('snap'); }
+    this.netLegs = true;
+    while (this.legs.length > n) this.legs.pop();
+    for (let i = 0; i < n; i++) {
+      const k = 5 + i * 5;
+      let l = this.legs[i];
+      if (!l) { l = { a: 0, fx: this.x, fy: this.y, st: 'planted', webT: 0 }; this.legs.push(l); }
+      l.a = a[k] / 100; l.tfx = dX(a[k + 1]); l.tfy = dY(a[k + 2]);
+      l.st = a[k + 3] & 1 ? 'windup' : a[k + 3] & 2 ? 'strike' : 'planted'; l.webT = a[k + 4] / 10;
+    }
+  }
   update(dt, W) {
-    if (this.mirror) { this.glide(dt); return; }
+    if (this.mirror) {
+      this.glide(dt);
+      for (const l of this.legs) if (l.tfx !== undefined) { const k = Math.min(1, dt * 14); l.fx = lerp(l.fx, l.tfx, k); l.fy = lerp(l.fy, l.tfy, k); }
+      return;
+    }
     for (const d of this.debris) { d.life -= dt; d.vy += G * dt; d.x += d.vx * dt; d.y += d.vy * dt; d.rot += d.vr * dt; if (d.y > GROUND_Y - 2) { d.y = GROUND_Y - 2; d.vy *= -0.3; d.vx *= 0.6; d.vr *= 0.5; } }
     this.debris = this.debris.filter(d => d.life > 0);
     this.hurtCD -= dt;

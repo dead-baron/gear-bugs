@@ -75,7 +75,10 @@ class World {
   step(dt, controlsFor) {
     this.time += dt;
     if (this.L.movers) {
-      updateMovers(this.L, this.time);
+      // lifts run on a round clock; VS nudges it toward the host's so everyone sees the same positions
+      this.moverT = (this.moverT || 0) + dt;
+      if (this.moverTarget !== undefined) { const err = this.moverTarget - this.moverT; if (Math.abs(err) > 1) this.moverT = this.moverTarget; else this.moverT += err * Math.min(1, dt * 3); }
+      updateMovers(this.L, this.moverT);
       // ropes anchored to a moving lift travel with it
       for (const s of this.spiders) if (s.rope && s.rope.plat && s.rope.plat.move) { s.rope.ax += s.rope.plat.dx; s.rope.ay += s.rope.plat.dy; }
     }
