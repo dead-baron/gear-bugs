@@ -17,46 +17,67 @@ class ArcherFish extends Enemy {
     super('archer', x, y);
     this.r = 6; this.hitR = 0; this.pond = pond; this.st = 'swim'; this.t = Math.random() * 10;
     this.vx = (Math.random() < 0.5 ? -1 : 1) * 26; this.depth = 18 + Math.random() * 32; this.goalX = x;
-    this.cd = 2 + Math.random() * 2; this.aimT = 0; this.surfaced = false; this.target = null;
+    this.cd = 6.5 + Math.random() * 3; this.aimT = 0;   // grace period: nobody gets shot during the round intro / first steps this.surfaced = false; this.target = null;
   }
-  webbable() { return false; }
+  webbable() { return this.st === 'aim' || (this.st === 'rise' && this.y < WATER_Y + 8); }
+  webHit(x, y) { return this.webbable() && dist(x, y, this.x + this.facing * 4, this.y - 2) < 10; }
   biteable() { return false; }
+  onWeb(W) {
+    // a web in the face spoils the shot: it ducks under and tries again later
+    this.st = 'dive'; this.surfaced = false; this.windup = 0; this.cd = 2.5 + Math.random() * 1.5;
+    SFX.play('splash'); floater(W, this.x, WATER_Y - 12, 'BLUB!', '#9ad8ff'); burst(W, this.x, WATER_Y, 10, ['#ffffff', '#9ad8ff'], 60, 0.4, 200);
+    return 'knock';
+  }
+  pickTarget(W) {
+    const wy = WATER_Y, R = 170 * Math.sqrt(W.D.aggro);
+    const t = W.nearestTarget(this.x, wy);
+    if (t && t.y < wy - 4 && dist(this.x, wy, t.x, t.y) < R) return t;
+    // nobody close: maybe pick off a golden fly instead
+    let best = null, bd = R * 0.9;
+    for (const f of W.flies) if (f.state === 'free' && !f.heart && f.y < wy - 10) { const d = dist(this.x, wy, f.x, f.y); if (d < bd) { bd = d; best = f; } }
+    return best ? { x: best.x, y: best.y, vx: best.vx, vy: best.vy, r: 4, fly: best } : null;
+  }
   update(dt, W) {
-    if (this.mirror) { this.glide(dt); this.surfaced = this.windup > 0 || this.ty < WATER_Y + 6; this.t += dt; return; }
+    if (this.mirror) { this.glide(dt); this.surfaced = this.windup > 0 || this.ty < WATER_Y + 2; this.t += dt; return; }
     const D = W.D, wy = WATER_Y, { x0, x1 } = this.pond;
     this.t += dt; this.cd -= dt;
-    const t = W.nearestTarget(this.x, wy);
-    const near = t && t.y < wy - 4 && dist(this.x, wy, t.x, t.y) < 170 * Math.sqrt(D.aggro);
+    // a fly knocked into the water is dinner
+    const snack = W.flies.find(f => f.state === 'sunk');
+    if (snack && this.st === 'swim') {
+      this.goalX = snack.x;
+      if (Math.abs(snack.x - this.x) < 8) { this.y = approach(this.y, wy + 2, 80 * dt); if (this.y < wy + 6) { W.flies.splice(W.flies.indexOf(snack), 1); burst(W, snack.x, wy, 8, ['#ffffff', '#9ad8ff', '#ffd23f'], 50, 0.4, 200); floater(W, snack.x, wy - 12, 'GULP!', '#ff8c42'); SFX.play('splash'); if (W.rules.onFlyEaten) W.rules.onFlyEaten(snack); } }
+    }
+    const t = this.st === 'swim' || this.st === 'dive' ? this.pickTarget(W) : (this.target && this.target.fly && this.target.fly.state !== 'free' ? null : this.pickTarget(W));
+    const near = !!t;
     if (this.st === 'swim') {
-      if (Math.abs(this.goalX - this.x) < 6 || Math.random() < dt * 0.15) this.goalX = x0 + 14 + Math.random() * (x1 - x0 - 28);
+      if (!snack && (Math.abs(this.goalX - this.x) < 6 || Math.random() < dt * 0.15)) this.goalX = x0 + 14 + Math.random() * (x1 - x0 - 28);
       this.vx = approach(this.vx, Math.sign(this.goalX - this.x) * 30 * D.speed, 40 * dt);
-      this.x += this.vx * dt; this.y = lerp(this.y, wy + this.depth + Math.sin(this.t * 1.7) * 3, Math.min(1, dt * 2));
+      this.x += this.vx * dt; if (!snack || Math.abs(snack.x - this.x) >= 8) this.y = lerp(this.y, wy + this.depth + Math.sin(this.t * 1.7) * 3, Math.min(1, dt * 2));
       if (Math.abs(this.vx) > 3) this.facing = Math.sign(this.vx);
       this.drawAngle = this.vx * 0.004;
-      if (near && this.cd <= 0) { this.st = 'rise'; this.target = t; SFX.play('splash', 0.5); }
+      if (near && this.cd <= 0 && !snack) { this.st = 'rise'; this.target = t; SFX.play('splash', 0.5); }
     } else if (this.st === 'rise') {
-      // swim up beneath the spider (not straight under, so the jet arcs)
       const tx = clamp(t ? t.x - Math.sign(t.x - this.x || 1) * 30 : this.x, x0 + 8, x1 - 8);
       this.x = approach(this.x, tx, 60 * D.speed * dt);
-      this.y = approach(this.y, wy + 3, 70 * dt);
+      this.y = approach(this.y, wy - 1, 70 * dt);
       this.drawAngle += angDiff(this.drawAngle, -0.6 * this.facing) * Math.min(1, dt * 6);
       if (!near) { this.st = 'dive'; this.cd = 1.2; }
-      else if (this.y <= wy + 3.5) { this.st = 'aim'; this.aimT = 0.55 + D.windup; this.surfaced = true; }
+      else if (this.y <= wy - 0.5) { this.st = 'aim'; this.aimT = 0.55 + D.windup; this.surfaced = true; this.target = t; }
     } else if (this.st === 'aim') {
       this.aimT -= dt;
+      // head poking out of the water, tracking its target
+      this.y = wy - 1 + Math.sin(this.t * 8) * 0.5;
       if (!near || !t) { this.st = 'dive'; this.surfaced = false; this.cd = 1.5; }
       else {
-        // lead the target: where will it be when the jet arrives?
-        const mx = this.x + this.facing * 4, my = wy - 2;
+        const mx = this.x + this.facing * 8, my = wy - 4;
         const d0 = dist(mx, my, t.x, t.y), tof = d0 / JET_SPEED;
         const px = t.x + (t.vx || 0) * tof * 0.9, py = t.y + (t.vy || 0) * tof * 0.9;
         const a = Math.atan2(py - my, px - mx);
-        this.aim = { a, tof, mx, my };
         this.facing = Math.cos(a) >= 0 ? 1 : -1;
-        this.drawAngle += angDiff(this.drawAngle, a - (this.facing < 0 ? Math.PI : 0)) * Math.min(1, dt * 10);
+        this.drawAngle += angDiff(this.drawAngle, clamp(a - (this.facing < 0 ? Math.PI : 0), -1.2, 1.2)) * Math.min(1, dt * 10);
         this.windup = this.aimT;
         if (this.aimT <= 0) {
-          const g = 150, vx = Math.cos(a) * JET_SPEED, vy = Math.sin(a) * JET_SPEED - 0.5 * g * tof;   // aim a little high: the jet sags
+          const g = 150, vx = Math.cos(a) * JET_SPEED, vy = Math.sin(a) * JET_SPEED - 0.5 * g * tof;
           W.enemyShots.push({ kind: 'jet', x: mx, y: my, vx, vy, life: 1.2, src: this });
           SFX.play('webspit'); burst(W, mx, wy, 6, ['#ffffff', '#9ad8ff'], 40, 0.3, 160, 1);
           this.st = 'dive'; this.windup = 0; this.cd = (3.2 + Math.random() * 2) / D.aggro;
@@ -79,7 +100,8 @@ class Frog extends Lizard {
     super(x, y);
     this.type = 'frog'; this.r = 10; this.hitR = 17; this.headLen = 11; this.tongueLen = 132;
     this.need = D.hell ? 5 : D.speed > 1.1 ? 4 : D.speed < 0.9 ? 2 : 3;
-    this.webLevel = 0; this.webDecayT = 0; this.jumpCD = 2.5; this.eatCD = 4 + Math.random() * 3; this.snack = null; this.swim = false; this.hurtCD = 0; this.sac = 0;
+    this.webLevel = 0; this.webDecayT = 0; this.attackCD = 6; this.jumpCD = 6.5;   // a moment to get going before it attacks
+    this.webLevel = 0; this.eatCD = 4 + Math.random() * 3; this.snack = null; this.swim = false; this.hurtCD = 0; this.sac = 0;
     const q = findCollision(x, y + 8, this.r + 10); if (q) { attachTo(this, q); this.state = 'stuck'; }
   }
   slowK() { return 1 - 0.7 * Math.min(1, this.webLevel / this.need); }
@@ -148,16 +170,28 @@ class Frog extends Lizard {
     if (this.hurtCD <= 0 && (this.state === 'air' || this.swim)) for (const tg of W.targets()) if (dist(this.x, this.y, tg.x, tg.y) < this.r + tg.r) { W.hurt(tg, 'hit', this); this.hurtCD = 1; }
   }
   updateSwim(dt, W, t, k, frozen) {
-    this.y = WATER_Y - 3 + Math.sin(T * 3) * 0.8; this.vy = 0;
-    // paddle to the nearest lily pad or bank
+    this.y = WATER_Y - 3 + Math.sin(T * 3) * 0.8; this.vy = 0; this.swimT = (this.swimT || 0) + dt;
+    if (frozen) return;
+    // pick a perch to climb back onto: a stump, lily pad or low leaf, close enough to jump to
     let best = null, bd = Infinity;
-    for (const p of PLATS) if (p.y >= WATER_Y - 40 && p.y <= WATER_Y + 2 && p.h < 900) { const cx = clamp(this.x, p.x + 4, p.x + p.w - 4), dd = Math.abs(cx - this.x); if (dd < bd) { bd = dd; best = p; } }
-    if (!frozen && best) {
-      const cx = clamp(this.x, best.x + 4, best.x + best.w - 4);
-      this.x = approach(this.x, cx, 45 * W.D.speed * k * dt); this.facing = cx > this.x ? 1 : cx < this.x ? -1 : this.facing; this.walk += dt * 20;
-      if (Math.abs(cx - this.x) < 1) { this.swim = false; this.x = cx; this.y = best.y - this.r; attachTo(this, best); this.state = 'stuck'; this.jumpCD = Math.min(this.jumpCD, 1.2); }
+    for (const p of PLATS) {
+      if (!(p.type === 'stump' || p.type === 'lilypad' || p.type === 'swampleaf' || p.type === 'branch')) continue;
+      if (p.y > WATER_Y || p.y < WATER_Y - 150) continue;
+      const cx = clamp(this.x, p.x + 6, p.x + p.w - 6), dd = Math.abs(cx - this.x) + (WATER_Y - p.y) * 0.6;
+      if (dd < bd) { bd = dd; best = p; }
     }
-    if (!frozen && t && this.jumpCD <= 0 && k > 0.35) { this.swim = false; jumpToward(this, t.x, t.y - 6, 520 * k, 0.6, 1.2, 280); this.y -= 4; this.jumpCD = (3.5 + Math.random() * 2) / W.D.aggro; SFX.play('splash'); }
+    if (best) {
+      const cx = clamp(this.x, best.x + 6, best.x + best.w - 6), reach = best.type === 'lilypad' ? 4 : 26;
+      if (Math.abs(cx - this.x) > reach) { const dir = Math.sign(cx - this.x); this.x += dir * 45 * W.D.speed * Math.max(0.4, k) * dt; this.facing = dir; this.walk += dt * 20; }
+      else if (this.swimT > 0.5) {
+        // spring up out of the water onto it
+        this.swim = false; this.swimT = 0; this.y -= 4;
+        jumpToward(this, cx, best.y - this.r - 2, 460, 0.35, 0.75, 220);
+        SFX.play('splash'); burst(W, this.x, WATER_Y, 12, ['#ffffff', '#9ad8ff'], 80, 0.5, 260);
+        return;
+      }
+    }
+    if (t && this.jumpCD <= 0 && k > 0.35 && this.swimT > 0.8) { this.swim = false; this.swimT = 0; jumpToward(this, t.x, t.y - 6, 520 * k, 0.6, 1.2, 280); this.y -= 4; this.jumpCD = (3.5 + Math.random() * 2) / W.D.aggro; SFX.play('splash'); }
   }
   frogTongue(dt, W, t) {
     if (this.windup > 0) {

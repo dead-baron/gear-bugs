@@ -80,6 +80,7 @@ class World {
       if (this.moverTarget !== undefined) { const err = this.moverTarget - this.moverT; if (Math.abs(err) > 1) this.moverT = this.moverTarget; else this.moverT += err * Math.min(1, dt * 3); }
       updateMovers(this.L, this.moverT);
     }
+    if (this.L.pond) { updateSwampLeaves(this, dt); updateVines(this, dt); }
     // ropes anchored to a moving lift or the rising sand travel with it
     for (const s of this.spiders) if (s.rope && s.rope.plat && (s.rope.plat.dx || s.rope.plat.dy)) { s.rope.ax += s.rope.plat.dx || 0; s.rope.ay += s.rope.plat.dy || 0; }
     for (const s of this.spiders) s.update(dt, controlsFor(s), this);
@@ -115,7 +116,7 @@ class World {
       if (!sc.landed) {
         const prevY = sc.y;
         sc.vy = Math.min(sc.vy + G * dt, 400); sc.y += sc.vy * dt;
-        for (const p of PLATS) if (sc.vy > 0 && sc.x >= p.x - 3 && sc.x <= p.x + p.w + 3 && prevY + 9 <= p.y + 1 + Math.max(0, -(p.dy || 0)) && sc.y + 9 >= p.y) { sc.y = p.y - 9; sc.landed = true; sc.vy = 0; if (p.move) { sc.plat = p; sc.ox = sc.x - p.x; } break; }
+        for (const p of PLATS) if (sc.vy > 0 && sc.x >= p.x - 3 && sc.x <= p.x + p.w + 3 && prevY + 9 <= p.y + 1 + Math.max(0, -(p.dy || 0)) && sc.y + 9 >= p.y) { sc.y = p.y - 9; sc.landed = true; sc.vy = 0; if (p.move || p.spring) { sc.plat = p; sc.ox = sc.x - p.x; } break; }
         if (sc.y > WATER_Y - 20) { sc.y = WATER_Y - 20; sc.landed = true; sc.vy = 0; }
       }
       if (sc.plat) { sc.x = sc.plat.x + sc.ox; sc.y = sc.plat.y - 9; }
@@ -147,6 +148,7 @@ class World {
         continue;
       }
       if (!this.authority) continue;
+      if (s.kind === 'jet') { const f = this.flies.find(f => f.state === 'free' && !f.heart && dist(s.x, s.y, f.x, f.y) < 8); if (f) { s.life = 0; f.state = 'fall'; f.vx = s.vx * 0.15; f.vy = 0; burst(this, f.x, f.y, 8, ['#ffffff', '#9ad8ff', '#ffd23f'], 50, 0.3); continue; } }
       for (const t of this.targets()) if (dist(s.x, s.y, t.x, t.y) < t.r + 4) { s.life = 0; this.hurt(t, s.kind === 'fire' ? 'fire' : s.kind === 'jet' ? 'knock' : 'stun', s.kind === 'jet' ? s : s.src || s); burst(this, s.x, s.y, 8, s.kind === 'fire' ? ['#ff8a00', '#ffe45c'] : s.kind === 'jet' ? ['#ffffff', '#9ad8ff', '#5ab0e8'] : ['#ffffff'], 60, 0.4); break; }
     }
     this.enemyShots = this.enemyShots.filter(s => s.life > 0);

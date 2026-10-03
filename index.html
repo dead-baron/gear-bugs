@@ -56,7 +56,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-03T19:54:40Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-03T20:11:06Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -744,6 +744,7 @@ const BIOMES = [
     sky: ['#0c1a14', '#10221a', '#142a20', '#183226', '#1c3a2c', '#204232', '#264a38', '#2c523e'],
     far: ['#16281e', '#1c3226'], near: ['#2a4a32', '#3a6040'], bush: ['#2f6a34', '#4f8a44'], sun: '#e8f0b0' },
 ];
+const VINE_TOP = 18;                  // swamp canopy underside: vines hang from here
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
 
@@ -934,7 +935,9 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 56, 84); return mkPlat(xIn(w, 60, 580), randInt(r, 165, 222), w, 10, 'leaf'); }, 2);
     tryPlace(() => { const w = randInt(r, 70, 100); const c = mkPlat(16, randInt(r, 110, 200), w, 11, 'branch'); c.touch = [P[0]]; return c; }, 1);
     tryPlace(() => { const w = randInt(r, 70, 100); const c = mkPlat(624 - w, randInt(r, 110, 200), w, 11, 'branch', { flip: true }); c.touch = [P[1]]; return c; }, 1);
-    L.enemySpawn = { x: sr.x + sr.w / 2, y: sr.y - 12 };
+    // the frog starts in the middle (never on a stump where players start)
+    const mid = P.find(q => q.type === 'stump' && q !== sl && q !== sr) || P.filter(q => q.type === 'lilypad').sort((a, b) => Math.abs(a.x + a.w / 2 - 320) - Math.abs(b.x + b.w / 2 - 320))[0];
+    L.enemySpawn = mid ? { x: mid.x + mid.w / 2, y: mid.y - 12 } : { x: 320, y: 200 };
   } else {
     // the ant hill mound sits on the sand; its hole is where the colony pours out
     const mw = randInt(r, 92, 112), mx = randInt(r, 250, 390 - mw / 2);
@@ -952,13 +955,18 @@ function generateLevel(biomeIdx, seed) {
   let high = P.filter(p => !frame.includes(p) && p.y < 160 && !p.move).length;
   for (let t = 0; t < 60 && high < 2; t++) {
     const w = randInt(r, 60, 100);
-    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone', 'leaf'][biomeIdx];
+    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone', 'leaf'][biomeIdx];   // swamp leaves become spring leaves below
     const c = mkPlat(xIn(w, 100, 540), randInt(r, 60, 150), w, 10, type);
     if (fits(c, P, null, M, reserved)) { P.push(c); high++; }
   }
   // Spawn points (on the ground / plateau surface)
   L.spawns = spawnXs.map(x => ({ x, y: gTop - 9 }));
   if (L.movers) for (const m of L.movers) { m.bx = m.x; m.by = m.y; }
+  if (biomeIdx === 6) {
+    // swamp leaves: big leaves on stems rising out of the water, springy under weight
+    const lr = rng(seed ^ 0x1EAF);
+    for (const p of P) if (p.type === 'leaf') { p.type = 'swampleaf'; p.dyn = true; p.h = 8; p.baseY = p.y; p.spring = { off: 0, vel: 0, load: 0 }; p.stemX = p.x + p.w * (0.3 + lr() * 0.4); p.stemBase = p.stemX + (lr() - 0.5) * 40; }
+  }
   // Decorative extras
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
@@ -971,6 +979,9 @@ function generateLevel(biomeIdx, seed) {
     for (let x = 600; x < 664; x += 3 + Math.floor(dr() * 3)) L.decor.push({ k: 'blade', x, h: 60 + Math.floor(dr() * 170), ph: dr() * TAU, front: x < 634 && dr() < 0.6, lean: -(0.25 + dr() * 0.35) });
     // vines hanging from the canopy, some in front of the action
     for (let i = 0; i < 16; i++) L.decor.push({ k: 'vine', x: 24 + dr() * 592, len: 30 + Math.floor(dr() * 120), ph: dr() * TAU, front: dr() < 0.35 });
+    // the longer vines can be grabbed and swung on
+    L.vines = L.decor.filter(d => d.k === 'vine' && d.len > 50 && !P.some(q => q.type !== 'canopy' && segRect(d.x, VINE_TOP + 2, d.x, VINE_TOP + d.len, q, 0)));
+    for (const v of L.vines) { v.grab = true; v.ang = 0; v.angV = 0; v.holder = null; }
     // light shafts through gaps in the canopy
     for (let i = 0; i < 5; i++) L.decor.push({ k: 'ray', x: 60 + i * 120 + dr() * 60, w: 14 + dr() * 22, ph: dr() * TAU });
     for (let i = 0; i < 26; i++) L.decor.push({ k: 'weed', x: x0 + 8 + dr() * (x1 - x0 - 16), h: 10 + Math.floor(dr() * 22), ph: dr() * TAU });
@@ -1584,6 +1595,7 @@ function drawGearShape(g, cx, cy, rr, ang, c1, c2) {
 function drawDynPlatform(p, t) {
   const x = Math.round(p.x), y = Math.round(p.y), w = p.w, h = p.h;
   if (p.type === 'lilypad') return;   // drawn on top of the water by drawPondWater
+  if (p.type === 'swampleaf') { drawSwampLeaf(p, t); return; }
   if (p.type === 'sand2') { drawRisingSand(p, t); return; }
   if (p.type === 'mound') { drawMound(p, t); return; }
   if (p.type === 'lift') {
@@ -1691,15 +1703,18 @@ function drawPondPlants(L, t, front) {
         ctx.fillStyle = front ? (k > 0.85 ? '#6fbe4a' : i % 7 ? '#3f8a34' : '#2f6a2a') : (i % 7 ? '#24502a' : '#1a3a1e');
         ctx.fillRect(Math.round(bx), base - i, k < 0.6 ? 2 : 1, 1);
       }
-    } else if (d.k === 'vine' && !!d.front === front) {
-      // vines dangling from the canopy, leaves along their length
-      let px = d.x, py = 16;
+    } else if (d.k === 'vine' && (d.grab ? front : !!d.front === front)) {
+      // vines dangling from the canopy, leaves along their length; grabbable ones swing and bend to a holder
+      const hold = d.holder && d.holder.rope && d.holder.rope.vine === d ? d.holder : null;
+      const hx = hold ? hold.x : 0, hy = hold ? hold.y : 0, hd = hold ? Math.max(1, dist(d.x, VINE_TOP, hx, hy)) : 0;
+      const col = d.grab ? '#3a7a2c' : front ? '#2f6a24' : '#1e4a1e', leafC = d.grab ? '#5fae44' : front ? '#4f9a3a' : '#2f6a2a', tipC = d.grab ? '#8cd060' : front ? '#7cc25a' : '#3f7a2e';
       for (let i = 0; i < d.len; i += 2) {
-        const sw = Math.sin(t * 1.1 + d.ph + i * 0.03) * (i / d.len) * 6;
-        const vx = d.x + sw;
-        ctx.fillStyle = front ? '#2f6a24' : '#1e4a1e'; ctx.fillRect(Math.round(vx), py + i, 1, 2);
-        if (i % 10 === 4) { const s = (i / 10) % 2 ? 1 : -1; ctx.fillStyle = front ? '#4f9a3a' : '#2f6a2a'; ctx.fillRect(Math.round(vx) + (s > 0 ? 1 : -3), py + i, 3, 2); ctx.fillStyle = front ? '#7cc25a' : '#3f7a2e'; ctx.fillRect(Math.round(vx) + (s > 0 ? 2 : -2), py + i, 1, 1); }
-        px = vx;
+        let vx, vy;
+        if (hold && i <= hd) { vx = d.x + (hx - d.x) * i / hd; vy = VINE_TOP + (hy - VINE_TOP) * i / hd; }
+        else if (hold) { vx = hx + Math.sin(T * 2 + d.ph) * (i - hd) * 0.05; vy = hy + (i - hd); }
+        else { const sw = Math.sin(t * 1.1 + d.ph + i * 0.03) * (i / d.len) * (d.grab ? 3 : 6); vx = d.x + Math.sin(d.ang || 0) * i + sw; vy = VINE_TOP + Math.cos(d.ang || 0) * i; }
+        ctx.fillStyle = col; ctx.fillRect(Math.round(vx), Math.round(vy), d.grab ? 2 : 1, 2);
+        if (i % 10 === 4) { const s = (i / 10) % 2 ? 1 : -1; ctx.fillStyle = leafC; ctx.fillRect(Math.round(vx) + (s > 0 ? 1 : -3), Math.round(vy), 3, 2); ctx.fillStyle = tipC; ctx.fillRect(Math.round(vx) + (s > 0 ? 2 : -2), Math.round(vy), 1, 1); }
       }
     }
   }
@@ -1775,6 +1790,64 @@ function drawLilyPad(p, t) {
   ctx.fillStyle = '#2f7a2a'; for (let i = 0; i < 3; i++) ctx.fillRect(Math.round(cx + 2 + i * 2), Math.round(cy - 2 + i), 2, 1);   // the notch
   ctx.fillStyle = '#3f9a3a'; ctx.fillRect(Math.round(cx - rx * 0.5), Math.round(cy), Math.round(rx), 1);
   if (p.flower) { const fx = Math.round(cx - rx * 0.4), fy = Math.round(cy - 3); ctx.fillStyle = '#ff9acb'; ctx.fillRect(fx - 2, fy, 5, 2); ctx.fillRect(fx - 1, fy - 2, 3, 2); ctx.fillStyle = '#fff3a0'; ctx.fillRect(fx, fy - 1, 1, 1); }
+}
+
+/* A big leaf held up on a stem that rises from the water */
+function drawSwampLeaf(p, t) {
+  const x = p.x, y = p.y, w = p.w, cx = x + w / 2, cy = y + 3, wy = ART.level && ART.level.water ? ART.level.water.y : GROUND_Y;
+  // stem: a gentle curve from the water up to the underside of the leaf
+  const sx = p.stemX + (p.x - (p.bx !== undefined ? p.bx : p.x)), bx = p.stemBase;
+  for (let yy = Math.round(y + 5); yy < wy + 4; yy += 1) {
+    const k = (yy - y) / Math.max(1, wy - y), xx = lerp(sx, bx, k * k) + Math.sin(k * 3 + p.stemBase) * 2;
+    ctx.fillStyle = '#1f4a22'; ctx.fillRect(Math.round(xx) - 1, yy, 3, 1); ctx.fillStyle = '#2f6a2c'; ctx.fillRect(Math.round(xx), yy, 1, 1);
+  }
+  // leaf blade: wide oval with a pointed tip, a midrib and veins
+  const tipDir = (p.stemX - x) / w < 0.5 ? 1 : -1, rx = w / 2 + 3;
+  for (let i = -5; i <= 5; i++) {
+    const k = 1 - (i * i) / 30, half = Math.round(rx * Math.sqrt(Math.max(0, k)));
+    ctx.fillStyle = i < -2 ? '#3f8a34' : i > 2 ? '#1f5a24' : '#2f7a2e';
+    ctx.fillRect(Math.round(cx - half), Math.round(cy + i * 0.8), half * 2, 1);
+  }
+  const tx = cx + tipDir * (rx + 5);
+  ctx.fillStyle = '#2f7a2e'; ctx.fillRect(Math.round(Math.min(tx, cx + tipDir * rx)), Math.round(cy - 1), 6, 2); ctx.fillRect(Math.round(tx - tipDir), Math.round(cy), 2, 1);
+  ctx.fillStyle = '#6fbe4a'; ctx.fillRect(Math.round(cx - rx + 4), Math.round(cy - 3), Math.round(rx * 1.3), 1);   // sheen along the top edge
+  ctx.fillStyle = '#1a4a1e'; ctx.fillRect(Math.round(cx - rx + 2), Math.round(cy), Math.round(rx * 2 - 2), 1);       // midrib
+  for (let vx = Math.round(cx - rx + 8); vx < cx + rx - 6; vx += 7) { ctx.fillStyle = '#245e28'; ctx.fillRect(vx, Math.round(cy - 2), 1, 2); ctx.fillRect(vx + 2, Math.round(cy + 1), 1, 2); }
+  if ((p.spring && p.spring.off > 1.5)) { ctx.fillStyle = 'rgba(150,220,255,0.6)'; ctx.fillRect(Math.round(cx - 4), Math.round(cy - 4), 1, 1); }
+}
+/* Leaves dip under whatever stands on them and spring back up when it leaves */
+function updateSwampLeaves(W, dt) {
+  const ents = [];
+  for (const s of W.allSpiders()) if (s.alive && (s.state === 'stuck' || s.st === 'stuck')) ents.push([s.x, s.y, s.r || SP.R, 1]);
+  for (const e of W.enemies) if (e.alive && e.type === 'frog' && e.state === 'stuck') ents.push([e.x, e.y, e.r, 2.2]);
+  for (const p of W.L.plats) {
+    if (!p.spring) continue;
+    let load = 0;
+    for (const [x, y, r, m] of ents) if (x > p.x - 3 && x < p.x + p.w + 3 && Math.abs(y + r - p.y) < 6) load += m;
+    const S = p.spring;
+    if (load > S.load) S.vel += 55 * (load - S.load);   // landing thump
+    S.load = load;
+    const target = Math.min(12, load * 4.5);
+    S.vel += ((target - S.off) * 90 - S.vel * 7) * dt;
+    S.off += S.vel * dt;
+    const ny = p.baseY + S.off;
+    p.dy = ny - p.y; p.y = ny;
+  }
+}
+/* Grabbable vines swing on after you let go, then settle */
+function updateVines(W, dt) {
+  for (const v of W.L.vines || []) {
+    const h = v.holder;
+    if (h && h.rope && h.rope.vine === v && h.alive) {
+      v.ang = Math.atan2(h.x - v.x, h.y - VINE_TOP);
+      const d = Math.max(1, dist(h.x, h.y, v.x, VINE_TOP)), tx = Math.cos(v.ang), ty = -Math.sin(v.ang);
+      v.angV = ((h.vx || 0) * tx + (h.vy || 0) * ty) / d;
+    } else {
+      v.holder = null;
+      v.angV += (-(G / Math.max(30, v.len)) * Math.sin(v.ang) * 0.6 - v.angV * 1.2) * dt;
+      v.ang += v.angV * dt;
+    }
+  }
 }
 
 /* ===== 50_sprites.js ===== */
@@ -2219,12 +2292,30 @@ class SpiderBody {
     this.vy = Math.min(this.vy + G * dt, SP.MAX_FALL);
     const hit = this.fly(dt);
     if (hit) this.land(hit, W);
-    else if (Math.abs(this.vx) > 10) this.facing = this.vx > 0 ? 1 : -1;
+    else { if (Math.abs(this.vx) > 10) this.facing = this.vx > 0 ? 1 : -1; if (W.L.vines && !this.knocked) this.tryGrabVine(W); }
+  }
+  /* swamp: flying into a hanging vine grabs it - then it swings like a rope */
+  tryGrabVine(W) {
+    this.vineCD = (this.vineCD || 0) - 1 / 60;
+    if (this.vineCD > 0) return;
+    for (const v of W.L.vines) {
+      if (v.holder) continue;
+      const ex = v.x + Math.sin(v.ang) * v.len, ey = VINE_TOP + Math.cos(v.ang) * v.len;
+      if (!segCircle(v.x, VINE_TOP, ex, ey, this.x, this.y, this.r - 1)) continue;
+      const d = dist(this.x, this.y, v.x, VINE_TOP);
+      if (d < 16) continue;
+      this.state = 'rope'; this.plat = null;
+      this.rope = { ax: v.x, ay: VINE_TOP, plat: null, len: clamp(d, SP.ROPE_MIN, SP.ROPE_MAX), blockT: 0, born: T, vine: v };
+      v.holder = this; SFX.play('attach');
+      burst(W, this.x, this.y, 4, ['#4f9a3a', '#7cc25a'], 30, 0.3, 60, 1);
+      return;
+    }
   }
 
   updateRope(dt, c, W) {
     const R = this.rope;
     if (c.jump) { // jump off the end of the rope, keeping momentum
+      if (R.vine) this.vineCD = 0.4;
       this.state = 'air'; this.rope = null; this.vy -= 70; this.noStickT = 0.08; SFX.play('release');
       return;
     }
@@ -2236,7 +2327,7 @@ class SpiderBody {
       // pump: push along the swing tangent
       if (Math.abs(c.mx) > 0.15) { const f = c.mx * SP.ROPE_PUMP * tx; this.vx += f * tx * sdt; this.vy += f * ty * sdt; }
       // the web slowly reels the spider in (hook-shot); up = faster, down = pay out
-      let reel = SP.ROPE_REEL;
+      let reel = R.vine ? 0 : SP.ROPE_REEL;   // vines don't reel you in by themselves
       if (c.my < -0.4) reel += SP.ROPE_REEL_FAST;
       if (c.my > 0.4) reel = -SP.ROPE_REEL_FAST * 0.8;
       R.len = clamp(R.len - reel * sdt, SP.ROPE_MIN, SP.ROPE_MAX);
@@ -2257,7 +2348,7 @@ class SpiderBody {
     }
     // rope snaps if a different platform cuts the line
     let blocked = false;
-    for (const p of PLATS) if (p !== R.plat && segRect(this.x, this.y, R.ax, R.ay, p, 2)) { blocked = true; break; }
+    if (!R.vine) for (const p of PLATS) if (p !== R.plat && segRect(this.x, this.y, R.ax, R.ay, p, 2)) { blocked = true; break; }
     R.blockT = blocked ? R.blockT + dt : 0;
     if (R.blockT > 0.12) { this.state = 'air'; this.rope = null; SFX.play('snap'); burst(W, this.x, this.y, 5, ['#ffffff'], 50, 0.3, 80, 1); }
     if (Math.abs(this.vx) > 15) this.facing = this.vx > 0 ? 1 : -1;
@@ -2468,6 +2559,8 @@ class WebShot {
   }
 }
 function drawRope(x, y, R) {
+  if (R.vine) return;   // the vine itself is drawn bending to the spider
+  if (ART.level && ART.level.vines && R.ay <= VINE_TOP + 1) { ctx.strokeStyle = '#3f8a34'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(R.ax, R.ay); ctx.stroke(); return; }
   const d = dist(x, y, R.ax, R.ay), slack = Math.max(0, R.len - d);
   ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(x, y);
@@ -2493,6 +2586,13 @@ class Fly {
   update(dt, W) {
     this.t += dt; this.age += dt;
     if (this.mirror && this.state === 'free') { this.x = lerp(this.x, this.tx, Math.min(1, dt * 10)); this.y = lerp(this.y, this.ty, Math.min(1, dt * 10)); return; }
+    if (this.state === 'fall') {   // knocked out of the air by a water jet
+      this.vy = Math.min(this.vy + G * dt, 300); this.x += this.vx * dt; this.y += this.vy * dt;
+      if (this.y >= WATER_Y - 1) { this.y = WATER_Y - 1; this.state = 'sunk'; this.life = 6; burst(W, this.x, WATER_Y, 6, ['#ffffff', '#9ad8ff'], 40, 0.3, 160, 1); }
+      else if (platAt(this.x, this.y + 2)) { this.state = 'free'; }
+      return;
+    }
+    if (this.state === 'sunk') { this.y = WATER_Y - 1 + Math.sin(this.t * 4) * 0.5; this.life -= dt; if (this.life <= 0) this.gone = true; return; }
     if (this.state === 'reel') {
       const s = this.reeler;
       if (!s || !s.alive) { this.state = 'free'; return; }
@@ -2516,7 +2616,7 @@ class Fly {
     if (this.y < 26) { this.y = 26; this.heading = Math.PI / 2 + (Math.random() - 0.5); }
     if (this.y > floor) { this.y = floor; this.heading = -Math.PI / 2 + (Math.random() - 0.5); }
   }
-  draw() { if (this.heart) drawButterfly(this.x, this.y, this.id, this.life < 2 ? clamp(this.life / 2, 0, 1) : 1); else drawFly(this.x, this.y); }
+  draw() { if (this.heart) drawButterfly(this.x, this.y, this.id, this.life < 2 ? clamp(this.life / 2, 0, 1) : 1); else if (this.state === 'sunk' || this.state === 'fall') { ctx.globalAlpha = 0.8; drawFly(this.x, this.y); ctx.globalAlpha = 1; } else drawFly(this.x, this.y); }
 }
 /* Heart butterfly: +1 heart (up to max); at full health it is still used up */
 function healSpider(W, sp, x, y) {
@@ -3845,46 +3945,67 @@ class ArcherFish extends Enemy {
     super('archer', x, y);
     this.r = 6; this.hitR = 0; this.pond = pond; this.st = 'swim'; this.t = Math.random() * 10;
     this.vx = (Math.random() < 0.5 ? -1 : 1) * 26; this.depth = 18 + Math.random() * 32; this.goalX = x;
-    this.cd = 2 + Math.random() * 2; this.aimT = 0; this.surfaced = false; this.target = null;
+    this.cd = 6.5 + Math.random() * 3; this.aimT = 0;   // grace period: nobody gets shot during the round intro / first steps this.surfaced = false; this.target = null;
   }
-  webbable() { return false; }
+  webbable() { return this.st === 'aim' || (this.st === 'rise' && this.y < WATER_Y + 8); }
+  webHit(x, y) { return this.webbable() && dist(x, y, this.x + this.facing * 4, this.y - 2) < 10; }
   biteable() { return false; }
+  onWeb(W) {
+    // a web in the face spoils the shot: it ducks under and tries again later
+    this.st = 'dive'; this.surfaced = false; this.windup = 0; this.cd = 2.5 + Math.random() * 1.5;
+    SFX.play('splash'); floater(W, this.x, WATER_Y - 12, 'BLUB!', '#9ad8ff'); burst(W, this.x, WATER_Y, 10, ['#ffffff', '#9ad8ff'], 60, 0.4, 200);
+    return 'knock';
+  }
+  pickTarget(W) {
+    const wy = WATER_Y, R = 170 * Math.sqrt(W.D.aggro);
+    const t = W.nearestTarget(this.x, wy);
+    if (t && t.y < wy - 4 && dist(this.x, wy, t.x, t.y) < R) return t;
+    // nobody close: maybe pick off a golden fly instead
+    let best = null, bd = R * 0.9;
+    for (const f of W.flies) if (f.state === 'free' && !f.heart && f.y < wy - 10) { const d = dist(this.x, wy, f.x, f.y); if (d < bd) { bd = d; best = f; } }
+    return best ? { x: best.x, y: best.y, vx: best.vx, vy: best.vy, r: 4, fly: best } : null;
+  }
   update(dt, W) {
-    if (this.mirror) { this.glide(dt); this.surfaced = this.windup > 0 || this.ty < WATER_Y + 6; this.t += dt; return; }
+    if (this.mirror) { this.glide(dt); this.surfaced = this.windup > 0 || this.ty < WATER_Y + 2; this.t += dt; return; }
     const D = W.D, wy = WATER_Y, { x0, x1 } = this.pond;
     this.t += dt; this.cd -= dt;
-    const t = W.nearestTarget(this.x, wy);
-    const near = t && t.y < wy - 4 && dist(this.x, wy, t.x, t.y) < 170 * Math.sqrt(D.aggro);
+    // a fly knocked into the water is dinner
+    const snack = W.flies.find(f => f.state === 'sunk');
+    if (snack && this.st === 'swim') {
+      this.goalX = snack.x;
+      if (Math.abs(snack.x - this.x) < 8) { this.y = approach(this.y, wy + 2, 80 * dt); if (this.y < wy + 6) { W.flies.splice(W.flies.indexOf(snack), 1); burst(W, snack.x, wy, 8, ['#ffffff', '#9ad8ff', '#ffd23f'], 50, 0.4, 200); floater(W, snack.x, wy - 12, 'GULP!', '#ff8c42'); SFX.play('splash'); if (W.rules.onFlyEaten) W.rules.onFlyEaten(snack); } }
+    }
+    const t = this.st === 'swim' || this.st === 'dive' ? this.pickTarget(W) : (this.target && this.target.fly && this.target.fly.state !== 'free' ? null : this.pickTarget(W));
+    const near = !!t;
     if (this.st === 'swim') {
-      if (Math.abs(this.goalX - this.x) < 6 || Math.random() < dt * 0.15) this.goalX = x0 + 14 + Math.random() * (x1 - x0 - 28);
+      if (!snack && (Math.abs(this.goalX - this.x) < 6 || Math.random() < dt * 0.15)) this.goalX = x0 + 14 + Math.random() * (x1 - x0 - 28);
       this.vx = approach(this.vx, Math.sign(this.goalX - this.x) * 30 * D.speed, 40 * dt);
-      this.x += this.vx * dt; this.y = lerp(this.y, wy + this.depth + Math.sin(this.t * 1.7) * 3, Math.min(1, dt * 2));
+      this.x += this.vx * dt; if (!snack || Math.abs(snack.x - this.x) >= 8) this.y = lerp(this.y, wy + this.depth + Math.sin(this.t * 1.7) * 3, Math.min(1, dt * 2));
       if (Math.abs(this.vx) > 3) this.facing = Math.sign(this.vx);
       this.drawAngle = this.vx * 0.004;
-      if (near && this.cd <= 0) { this.st = 'rise'; this.target = t; SFX.play('splash', 0.5); }
+      if (near && this.cd <= 0 && !snack) { this.st = 'rise'; this.target = t; SFX.play('splash', 0.5); }
     } else if (this.st === 'rise') {
-      // swim up beneath the spider (not straight under, so the jet arcs)
       const tx = clamp(t ? t.x - Math.sign(t.x - this.x || 1) * 30 : this.x, x0 + 8, x1 - 8);
       this.x = approach(this.x, tx, 60 * D.speed * dt);
-      this.y = approach(this.y, wy + 3, 70 * dt);
+      this.y = approach(this.y, wy - 1, 70 * dt);
       this.drawAngle += angDiff(this.drawAngle, -0.6 * this.facing) * Math.min(1, dt * 6);
       if (!near) { this.st = 'dive'; this.cd = 1.2; }
-      else if (this.y <= wy + 3.5) { this.st = 'aim'; this.aimT = 0.55 + D.windup; this.surfaced = true; }
+      else if (this.y <= wy - 0.5) { this.st = 'aim'; this.aimT = 0.55 + D.windup; this.surfaced = true; this.target = t; }
     } else if (this.st === 'aim') {
       this.aimT -= dt;
+      // head poking out of the water, tracking its target
+      this.y = wy - 1 + Math.sin(this.t * 8) * 0.5;
       if (!near || !t) { this.st = 'dive'; this.surfaced = false; this.cd = 1.5; }
       else {
-        // lead the target: where will it be when the jet arrives?
-        const mx = this.x + this.facing * 4, my = wy - 2;
+        const mx = this.x + this.facing * 8, my = wy - 4;
         const d0 = dist(mx, my, t.x, t.y), tof = d0 / JET_SPEED;
         const px = t.x + (t.vx || 0) * tof * 0.9, py = t.y + (t.vy || 0) * tof * 0.9;
         const a = Math.atan2(py - my, px - mx);
-        this.aim = { a, tof, mx, my };
         this.facing = Math.cos(a) >= 0 ? 1 : -1;
-        this.drawAngle += angDiff(this.drawAngle, a - (this.facing < 0 ? Math.PI : 0)) * Math.min(1, dt * 10);
+        this.drawAngle += angDiff(this.drawAngle, clamp(a - (this.facing < 0 ? Math.PI : 0), -1.2, 1.2)) * Math.min(1, dt * 10);
         this.windup = this.aimT;
         if (this.aimT <= 0) {
-          const g = 150, vx = Math.cos(a) * JET_SPEED, vy = Math.sin(a) * JET_SPEED - 0.5 * g * tof;   // aim a little high: the jet sags
+          const g = 150, vx = Math.cos(a) * JET_SPEED, vy = Math.sin(a) * JET_SPEED - 0.5 * g * tof;
           W.enemyShots.push({ kind: 'jet', x: mx, y: my, vx, vy, life: 1.2, src: this });
           SFX.play('webspit'); burst(W, mx, wy, 6, ['#ffffff', '#9ad8ff'], 40, 0.3, 160, 1);
           this.st = 'dive'; this.windup = 0; this.cd = (3.2 + Math.random() * 2) / D.aggro;
@@ -3907,7 +4028,8 @@ class Frog extends Lizard {
     super(x, y);
     this.type = 'frog'; this.r = 10; this.hitR = 17; this.headLen = 11; this.tongueLen = 132;
     this.need = D.hell ? 5 : D.speed > 1.1 ? 4 : D.speed < 0.9 ? 2 : 3;
-    this.webLevel = 0; this.webDecayT = 0; this.jumpCD = 2.5; this.eatCD = 4 + Math.random() * 3; this.snack = null; this.swim = false; this.hurtCD = 0; this.sac = 0;
+    this.webLevel = 0; this.webDecayT = 0; this.attackCD = 6; this.jumpCD = 6.5;   // a moment to get going before it attacks
+    this.webLevel = 0; this.eatCD = 4 + Math.random() * 3; this.snack = null; this.swim = false; this.hurtCD = 0; this.sac = 0;
     const q = findCollision(x, y + 8, this.r + 10); if (q) { attachTo(this, q); this.state = 'stuck'; }
   }
   slowK() { return 1 - 0.7 * Math.min(1, this.webLevel / this.need); }
@@ -3976,16 +4098,28 @@ class Frog extends Lizard {
     if (this.hurtCD <= 0 && (this.state === 'air' || this.swim)) for (const tg of W.targets()) if (dist(this.x, this.y, tg.x, tg.y) < this.r + tg.r) { W.hurt(tg, 'hit', this); this.hurtCD = 1; }
   }
   updateSwim(dt, W, t, k, frozen) {
-    this.y = WATER_Y - 3 + Math.sin(T * 3) * 0.8; this.vy = 0;
-    // paddle to the nearest lily pad or bank
+    this.y = WATER_Y - 3 + Math.sin(T * 3) * 0.8; this.vy = 0; this.swimT = (this.swimT || 0) + dt;
+    if (frozen) return;
+    // pick a perch to climb back onto: a stump, lily pad or low leaf, close enough to jump to
     let best = null, bd = Infinity;
-    for (const p of PLATS) if (p.y >= WATER_Y - 40 && p.y <= WATER_Y + 2 && p.h < 900) { const cx = clamp(this.x, p.x + 4, p.x + p.w - 4), dd = Math.abs(cx - this.x); if (dd < bd) { bd = dd; best = p; } }
-    if (!frozen && best) {
-      const cx = clamp(this.x, best.x + 4, best.x + best.w - 4);
-      this.x = approach(this.x, cx, 45 * W.D.speed * k * dt); this.facing = cx > this.x ? 1 : cx < this.x ? -1 : this.facing; this.walk += dt * 20;
-      if (Math.abs(cx - this.x) < 1) { this.swim = false; this.x = cx; this.y = best.y - this.r; attachTo(this, best); this.state = 'stuck'; this.jumpCD = Math.min(this.jumpCD, 1.2); }
+    for (const p of PLATS) {
+      if (!(p.type === 'stump' || p.type === 'lilypad' || p.type === 'swampleaf' || p.type === 'branch')) continue;
+      if (p.y > WATER_Y || p.y < WATER_Y - 150) continue;
+      const cx = clamp(this.x, p.x + 6, p.x + p.w - 6), dd = Math.abs(cx - this.x) + (WATER_Y - p.y) * 0.6;
+      if (dd < bd) { bd = dd; best = p; }
     }
-    if (!frozen && t && this.jumpCD <= 0 && k > 0.35) { this.swim = false; jumpToward(this, t.x, t.y - 6, 520 * k, 0.6, 1.2, 280); this.y -= 4; this.jumpCD = (3.5 + Math.random() * 2) / W.D.aggro; SFX.play('splash'); }
+    if (best) {
+      const cx = clamp(this.x, best.x + 6, best.x + best.w - 6), reach = best.type === 'lilypad' ? 4 : 26;
+      if (Math.abs(cx - this.x) > reach) { const dir = Math.sign(cx - this.x); this.x += dir * 45 * W.D.speed * Math.max(0.4, k) * dt; this.facing = dir; this.walk += dt * 20; }
+      else if (this.swimT > 0.5) {
+        // spring up out of the water onto it
+        this.swim = false; this.swimT = 0; this.y -= 4;
+        jumpToward(this, cx, best.y - this.r - 2, 460, 0.35, 0.75, 220);
+        SFX.play('splash'); burst(W, this.x, WATER_Y, 12, ['#ffffff', '#9ad8ff'], 80, 0.5, 260);
+        return;
+      }
+    }
+    if (t && this.jumpCD <= 0 && k > 0.35 && this.swimT > 0.8) { this.swim = false; this.swimT = 0; jumpToward(this, t.x, t.y - 6, 520 * k, 0.6, 1.2, 280); this.y -= 4; this.jumpCD = (3.5 + Math.random() * 2) / W.D.aggro; SFX.play('splash'); }
   }
   frogTongue(dt, W, t) {
     if (this.windup > 0) {
@@ -4159,6 +4293,7 @@ class World {
       if (this.moverTarget !== undefined) { const err = this.moverTarget - this.moverT; if (Math.abs(err) > 1) this.moverT = this.moverTarget; else this.moverT += err * Math.min(1, dt * 3); }
       updateMovers(this.L, this.moverT);
     }
+    if (this.L.pond) { updateSwampLeaves(this, dt); updateVines(this, dt); }
     // ropes anchored to a moving lift or the rising sand travel with it
     for (const s of this.spiders) if (s.rope && s.rope.plat && (s.rope.plat.dx || s.rope.plat.dy)) { s.rope.ax += s.rope.plat.dx || 0; s.rope.ay += s.rope.plat.dy || 0; }
     for (const s of this.spiders) s.update(dt, controlsFor(s), this);
@@ -4194,7 +4329,7 @@ class World {
       if (!sc.landed) {
         const prevY = sc.y;
         sc.vy = Math.min(sc.vy + G * dt, 400); sc.y += sc.vy * dt;
-        for (const p of PLATS) if (sc.vy > 0 && sc.x >= p.x - 3 && sc.x <= p.x + p.w + 3 && prevY + 9 <= p.y + 1 + Math.max(0, -(p.dy || 0)) && sc.y + 9 >= p.y) { sc.y = p.y - 9; sc.landed = true; sc.vy = 0; if (p.move) { sc.plat = p; sc.ox = sc.x - p.x; } break; }
+        for (const p of PLATS) if (sc.vy > 0 && sc.x >= p.x - 3 && sc.x <= p.x + p.w + 3 && prevY + 9 <= p.y + 1 + Math.max(0, -(p.dy || 0)) && sc.y + 9 >= p.y) { sc.y = p.y - 9; sc.landed = true; sc.vy = 0; if (p.move || p.spring) { sc.plat = p; sc.ox = sc.x - p.x; } break; }
         if (sc.y > WATER_Y - 20) { sc.y = WATER_Y - 20; sc.landed = true; sc.vy = 0; }
       }
       if (sc.plat) { sc.x = sc.plat.x + sc.ox; sc.y = sc.plat.y - 9; }
@@ -4226,6 +4361,7 @@ class World {
         continue;
       }
       if (!this.authority) continue;
+      if (s.kind === 'jet') { const f = this.flies.find(f => f.state === 'free' && !f.heart && dist(s.x, s.y, f.x, f.y) < 8); if (f) { s.life = 0; f.state = 'fall'; f.vx = s.vx * 0.15; f.vy = 0; burst(this, f.x, f.y, 8, ['#ffffff', '#9ad8ff', '#ffd23f'], 50, 0.3); continue; } }
       for (const t of this.targets()) if (dist(s.x, s.y, t.x, t.y) < t.r + 4) { s.life = 0; this.hurt(t, s.kind === 'fire' ? 'fire' : s.kind === 'jet' ? 'knock' : 'stun', s.kind === 'jet' ? s : s.src || s); burst(this, s.x, s.y, 8, s.kind === 'fire' ? ['#ff8a00', '#ffe45c'] : s.kind === 'jet' ? ['#ffffff', '#9ad8ff', '#5ab0e8'] : ['#ffffff'], 60, 0.4); break; }
     }
     this.enemyShots = this.enemyShots.filter(s => s.life > 0);

@@ -27,6 +27,7 @@ const BIOMES = [
     sky: ['#0c1a14', '#10221a', '#142a20', '#183226', '#1c3a2c', '#204232', '#264a38', '#2c523e'],
     far: ['#16281e', '#1c3226'], near: ['#2a4a32', '#3a6040'], bush: ['#2f6a34', '#4f8a44'], sun: '#e8f0b0' },
 ];
+const VINE_TOP = 18;                  // swamp canopy underside: vines hang from here
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
 
@@ -217,7 +218,9 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 56, 84); return mkPlat(xIn(w, 60, 580), randInt(r, 165, 222), w, 10, 'leaf'); }, 2);
     tryPlace(() => { const w = randInt(r, 70, 100); const c = mkPlat(16, randInt(r, 110, 200), w, 11, 'branch'); c.touch = [P[0]]; return c; }, 1);
     tryPlace(() => { const w = randInt(r, 70, 100); const c = mkPlat(624 - w, randInt(r, 110, 200), w, 11, 'branch', { flip: true }); c.touch = [P[1]]; return c; }, 1);
-    L.enemySpawn = { x: sr.x + sr.w / 2, y: sr.y - 12 };
+    // the frog starts in the middle (never on a stump where players start)
+    const mid = P.find(q => q.type === 'stump' && q !== sl && q !== sr) || P.filter(q => q.type === 'lilypad').sort((a, b) => Math.abs(a.x + a.w / 2 - 320) - Math.abs(b.x + b.w / 2 - 320))[0];
+    L.enemySpawn = mid ? { x: mid.x + mid.w / 2, y: mid.y - 12 } : { x: 320, y: 200 };
   } else {
     // the ant hill mound sits on the sand; its hole is where the colony pours out
     const mw = randInt(r, 92, 112), mx = randInt(r, 250, 390 - mw / 2);
@@ -235,13 +238,18 @@ function generateLevel(biomeIdx, seed) {
   let high = P.filter(p => !frame.includes(p) && p.y < 160 && !p.move).length;
   for (let t = 0; t < 60 && high < 2; t++) {
     const w = randInt(r, 60, 100);
-    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone', 'leaf'][biomeIdx];
+    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone', 'leaf'][biomeIdx];   // swamp leaves become spring leaves below
     const c = mkPlat(xIn(w, 100, 540), randInt(r, 60, 150), w, 10, type);
     if (fits(c, P, null, M, reserved)) { P.push(c); high++; }
   }
   // Spawn points (on the ground / plateau surface)
   L.spawns = spawnXs.map(x => ({ x, y: gTop - 9 }));
   if (L.movers) for (const m of L.movers) { m.bx = m.x; m.by = m.y; }
+  if (biomeIdx === 6) {
+    // swamp leaves: big leaves on stems rising out of the water, springy under weight
+    const lr = rng(seed ^ 0x1EAF);
+    for (const p of P) if (p.type === 'leaf') { p.type = 'swampleaf'; p.dyn = true; p.h = 8; p.baseY = p.y; p.spring = { off: 0, vel: 0, load: 0 }; p.stemX = p.x + p.w * (0.3 + lr() * 0.4); p.stemBase = p.stemX + (lr() - 0.5) * 40; }
+  }
   // Decorative extras
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
@@ -254,6 +262,9 @@ function generateLevel(biomeIdx, seed) {
     for (let x = 600; x < 664; x += 3 + Math.floor(dr() * 3)) L.decor.push({ k: 'blade', x, h: 60 + Math.floor(dr() * 170), ph: dr() * TAU, front: x < 634 && dr() < 0.6, lean: -(0.25 + dr() * 0.35) });
     // vines hanging from the canopy, some in front of the action
     for (let i = 0; i < 16; i++) L.decor.push({ k: 'vine', x: 24 + dr() * 592, len: 30 + Math.floor(dr() * 120), ph: dr() * TAU, front: dr() < 0.35 });
+    // the longer vines can be grabbed and swung on
+    L.vines = L.decor.filter(d => d.k === 'vine' && d.len > 50 && !P.some(q => q.type !== 'canopy' && segRect(d.x, VINE_TOP + 2, d.x, VINE_TOP + d.len, q, 0)));
+    for (const v of L.vines) { v.grab = true; v.ang = 0; v.angV = 0; v.holder = null; }
     // light shafts through gaps in the canopy
     for (let i = 0; i < 5; i++) L.decor.push({ k: 'ray', x: 60 + i * 120 + dr() * 60, w: 14 + dr() * 22, ph: dr() * TAU });
     for (let i = 0; i < 26; i++) L.decor.push({ k: 'weed', x: x0 + 8 + dr() * (x1 - x0 - 16), h: 10 + Math.floor(dr() * 22), ph: dr() * TAU });
@@ -867,6 +878,7 @@ function drawGearShape(g, cx, cy, rr, ang, c1, c2) {
 function drawDynPlatform(p, t) {
   const x = Math.round(p.x), y = Math.round(p.y), w = p.w, h = p.h;
   if (p.type === 'lilypad') return;   // drawn on top of the water by drawPondWater
+  if (p.type === 'swampleaf') { drawSwampLeaf(p, t); return; }
   if (p.type === 'sand2') { drawRisingSand(p, t); return; }
   if (p.type === 'mound') { drawMound(p, t); return; }
   if (p.type === 'lift') {
@@ -974,15 +986,18 @@ function drawPondPlants(L, t, front) {
         ctx.fillStyle = front ? (k > 0.85 ? '#6fbe4a' : i % 7 ? '#3f8a34' : '#2f6a2a') : (i % 7 ? '#24502a' : '#1a3a1e');
         ctx.fillRect(Math.round(bx), base - i, k < 0.6 ? 2 : 1, 1);
       }
-    } else if (d.k === 'vine' && !!d.front === front) {
-      // vines dangling from the canopy, leaves along their length
-      let px = d.x, py = 16;
+    } else if (d.k === 'vine' && (d.grab ? front : !!d.front === front)) {
+      // vines dangling from the canopy, leaves along their length; grabbable ones swing and bend to a holder
+      const hold = d.holder && d.holder.rope && d.holder.rope.vine === d ? d.holder : null;
+      const hx = hold ? hold.x : 0, hy = hold ? hold.y : 0, hd = hold ? Math.max(1, dist(d.x, VINE_TOP, hx, hy)) : 0;
+      const col = d.grab ? '#3a7a2c' : front ? '#2f6a24' : '#1e4a1e', leafC = d.grab ? '#5fae44' : front ? '#4f9a3a' : '#2f6a2a', tipC = d.grab ? '#8cd060' : front ? '#7cc25a' : '#3f7a2e';
       for (let i = 0; i < d.len; i += 2) {
-        const sw = Math.sin(t * 1.1 + d.ph + i * 0.03) * (i / d.len) * 6;
-        const vx = d.x + sw;
-        ctx.fillStyle = front ? '#2f6a24' : '#1e4a1e'; ctx.fillRect(Math.round(vx), py + i, 1, 2);
-        if (i % 10 === 4) { const s = (i / 10) % 2 ? 1 : -1; ctx.fillStyle = front ? '#4f9a3a' : '#2f6a2a'; ctx.fillRect(Math.round(vx) + (s > 0 ? 1 : -3), py + i, 3, 2); ctx.fillStyle = front ? '#7cc25a' : '#3f7a2e'; ctx.fillRect(Math.round(vx) + (s > 0 ? 2 : -2), py + i, 1, 1); }
-        px = vx;
+        let vx, vy;
+        if (hold && i <= hd) { vx = d.x + (hx - d.x) * i / hd; vy = VINE_TOP + (hy - VINE_TOP) * i / hd; }
+        else if (hold) { vx = hx + Math.sin(T * 2 + d.ph) * (i - hd) * 0.05; vy = hy + (i - hd); }
+        else { const sw = Math.sin(t * 1.1 + d.ph + i * 0.03) * (i / d.len) * (d.grab ? 3 : 6); vx = d.x + Math.sin(d.ang || 0) * i + sw; vy = VINE_TOP + Math.cos(d.ang || 0) * i; }
+        ctx.fillStyle = col; ctx.fillRect(Math.round(vx), Math.round(vy), d.grab ? 2 : 1, 2);
+        if (i % 10 === 4) { const s = (i / 10) % 2 ? 1 : -1; ctx.fillStyle = leafC; ctx.fillRect(Math.round(vx) + (s > 0 ? 1 : -3), Math.round(vy), 3, 2); ctx.fillStyle = tipC; ctx.fillRect(Math.round(vx) + (s > 0 ? 2 : -2), Math.round(vy), 1, 1); }
       }
     }
   }
@@ -1058,4 +1073,62 @@ function drawLilyPad(p, t) {
   ctx.fillStyle = '#2f7a2a'; for (let i = 0; i < 3; i++) ctx.fillRect(Math.round(cx + 2 + i * 2), Math.round(cy - 2 + i), 2, 1);   // the notch
   ctx.fillStyle = '#3f9a3a'; ctx.fillRect(Math.round(cx - rx * 0.5), Math.round(cy), Math.round(rx), 1);
   if (p.flower) { const fx = Math.round(cx - rx * 0.4), fy = Math.round(cy - 3); ctx.fillStyle = '#ff9acb'; ctx.fillRect(fx - 2, fy, 5, 2); ctx.fillRect(fx - 1, fy - 2, 3, 2); ctx.fillStyle = '#fff3a0'; ctx.fillRect(fx, fy - 1, 1, 1); }
+}
+
+/* A big leaf held up on a stem that rises from the water */
+function drawSwampLeaf(p, t) {
+  const x = p.x, y = p.y, w = p.w, cx = x + w / 2, cy = y + 3, wy = ART.level && ART.level.water ? ART.level.water.y : GROUND_Y;
+  // stem: a gentle curve from the water up to the underside of the leaf
+  const sx = p.stemX + (p.x - (p.bx !== undefined ? p.bx : p.x)), bx = p.stemBase;
+  for (let yy = Math.round(y + 5); yy < wy + 4; yy += 1) {
+    const k = (yy - y) / Math.max(1, wy - y), xx = lerp(sx, bx, k * k) + Math.sin(k * 3 + p.stemBase) * 2;
+    ctx.fillStyle = '#1f4a22'; ctx.fillRect(Math.round(xx) - 1, yy, 3, 1); ctx.fillStyle = '#2f6a2c'; ctx.fillRect(Math.round(xx), yy, 1, 1);
+  }
+  // leaf blade: wide oval with a pointed tip, a midrib and veins
+  const tipDir = (p.stemX - x) / w < 0.5 ? 1 : -1, rx = w / 2 + 3;
+  for (let i = -5; i <= 5; i++) {
+    const k = 1 - (i * i) / 30, half = Math.round(rx * Math.sqrt(Math.max(0, k)));
+    ctx.fillStyle = i < -2 ? '#3f8a34' : i > 2 ? '#1f5a24' : '#2f7a2e';
+    ctx.fillRect(Math.round(cx - half), Math.round(cy + i * 0.8), half * 2, 1);
+  }
+  const tx = cx + tipDir * (rx + 5);
+  ctx.fillStyle = '#2f7a2e'; ctx.fillRect(Math.round(Math.min(tx, cx + tipDir * rx)), Math.round(cy - 1), 6, 2); ctx.fillRect(Math.round(tx - tipDir), Math.round(cy), 2, 1);
+  ctx.fillStyle = '#6fbe4a'; ctx.fillRect(Math.round(cx - rx + 4), Math.round(cy - 3), Math.round(rx * 1.3), 1);   // sheen along the top edge
+  ctx.fillStyle = '#1a4a1e'; ctx.fillRect(Math.round(cx - rx + 2), Math.round(cy), Math.round(rx * 2 - 2), 1);       // midrib
+  for (let vx = Math.round(cx - rx + 8); vx < cx + rx - 6; vx += 7) { ctx.fillStyle = '#245e28'; ctx.fillRect(vx, Math.round(cy - 2), 1, 2); ctx.fillRect(vx + 2, Math.round(cy + 1), 1, 2); }
+  if ((p.spring && p.spring.off > 1.5)) { ctx.fillStyle = 'rgba(150,220,255,0.6)'; ctx.fillRect(Math.round(cx - 4), Math.round(cy - 4), 1, 1); }
+}
+/* Leaves dip under whatever stands on them and spring back up when it leaves */
+function updateSwampLeaves(W, dt) {
+  const ents = [];
+  for (const s of W.allSpiders()) if (s.alive && (s.state === 'stuck' || s.st === 'stuck')) ents.push([s.x, s.y, s.r || SP.R, 1]);
+  for (const e of W.enemies) if (e.alive && e.type === 'frog' && e.state === 'stuck') ents.push([e.x, e.y, e.r, 2.2]);
+  for (const p of W.L.plats) {
+    if (!p.spring) continue;
+    let load = 0;
+    for (const [x, y, r, m] of ents) if (x > p.x - 3 && x < p.x + p.w + 3 && Math.abs(y + r - p.y) < 6) load += m;
+    const S = p.spring;
+    if (load > S.load) S.vel += 55 * (load - S.load);   // landing thump
+    S.load = load;
+    const target = Math.min(12, load * 4.5);
+    S.vel += ((target - S.off) * 90 - S.vel * 7) * dt;
+    S.off += S.vel * dt;
+    const ny = p.baseY + S.off;
+    p.dy = ny - p.y; p.y = ny;
+  }
+}
+/* Grabbable vines swing on after you let go, then settle */
+function updateVines(W, dt) {
+  for (const v of W.L.vines || []) {
+    const h = v.holder;
+    if (h && h.rope && h.rope.vine === v && h.alive) {
+      v.ang = Math.atan2(h.x - v.x, h.y - VINE_TOP);
+      const d = Math.max(1, dist(h.x, h.y, v.x, VINE_TOP)), tx = Math.cos(v.ang), ty = -Math.sin(v.ang);
+      v.angV = ((h.vx || 0) * tx + (h.vy || 0) * ty) / d;
+    } else {
+      v.holder = null;
+      v.angV += (-(G / Math.max(30, v.len)) * Math.sin(v.ang) * 0.6 - v.angV * 1.2) * dt;
+      v.ang += v.angV * dt;
+    }
+  }
 }

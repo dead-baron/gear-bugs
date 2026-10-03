@@ -137,12 +137,30 @@ class SpiderBody {
     this.vy = Math.min(this.vy + G * dt, SP.MAX_FALL);
     const hit = this.fly(dt);
     if (hit) this.land(hit, W);
-    else if (Math.abs(this.vx) > 10) this.facing = this.vx > 0 ? 1 : -1;
+    else { if (Math.abs(this.vx) > 10) this.facing = this.vx > 0 ? 1 : -1; if (W.L.vines && !this.knocked) this.tryGrabVine(W); }
+  }
+  /* swamp: flying into a hanging vine grabs it - then it swings like a rope */
+  tryGrabVine(W) {
+    this.vineCD = (this.vineCD || 0) - 1 / 60;
+    if (this.vineCD > 0) return;
+    for (const v of W.L.vines) {
+      if (v.holder) continue;
+      const ex = v.x + Math.sin(v.ang) * v.len, ey = VINE_TOP + Math.cos(v.ang) * v.len;
+      if (!segCircle(v.x, VINE_TOP, ex, ey, this.x, this.y, this.r - 1)) continue;
+      const d = dist(this.x, this.y, v.x, VINE_TOP);
+      if (d < 16) continue;
+      this.state = 'rope'; this.plat = null;
+      this.rope = { ax: v.x, ay: VINE_TOP, plat: null, len: clamp(d, SP.ROPE_MIN, SP.ROPE_MAX), blockT: 0, born: T, vine: v };
+      v.holder = this; SFX.play('attach');
+      burst(W, this.x, this.y, 4, ['#4f9a3a', '#7cc25a'], 30, 0.3, 60, 1);
+      return;
+    }
   }
 
   updateRope(dt, c, W) {
     const R = this.rope;
     if (c.jump) { // jump off the end of the rope, keeping momentum
+      if (R.vine) this.vineCD = 0.4;
       this.state = 'air'; this.rope = null; this.vy -= 70; this.noStickT = 0.08; SFX.play('release');
       return;
     }
@@ -154,7 +172,7 @@ class SpiderBody {
       // pump: push along the swing tangent
       if (Math.abs(c.mx) > 0.15) { const f = c.mx * SP.ROPE_PUMP * tx; this.vx += f * tx * sdt; this.vy += f * ty * sdt; }
       // the web slowly reels the spider in (hook-shot); up = faster, down = pay out
-      let reel = SP.ROPE_REEL;
+      let reel = R.vine ? 0 : SP.ROPE_REEL;   // vines don't reel you in by themselves
       if (c.my < -0.4) reel += SP.ROPE_REEL_FAST;
       if (c.my > 0.4) reel = -SP.ROPE_REEL_FAST * 0.8;
       R.len = clamp(R.len - reel * sdt, SP.ROPE_MIN, SP.ROPE_MAX);
@@ -175,7 +193,7 @@ class SpiderBody {
     }
     // rope snaps if a different platform cuts the line
     let blocked = false;
-    for (const p of PLATS) if (p !== R.plat && segRect(this.x, this.y, R.ax, R.ay, p, 2)) { blocked = true; break; }
+    if (!R.vine) for (const p of PLATS) if (p !== R.plat && segRect(this.x, this.y, R.ax, R.ay, p, 2)) { blocked = true; break; }
     R.blockT = blocked ? R.blockT + dt : 0;
     if (R.blockT > 0.12) { this.state = 'air'; this.rope = null; SFX.play('snap'); burst(W, this.x, this.y, 5, ['#ffffff'], 50, 0.3, 80, 1); }
     if (Math.abs(this.vx) > 15) this.facing = this.vx > 0 ? 1 : -1;
@@ -386,6 +404,8 @@ class WebShot {
   }
 }
 function drawRope(x, y, R) {
+  if (R.vine) return;   // the vine itself is drawn bending to the spider
+  if (ART.level && ART.level.vines && R.ay <= VINE_TOP + 1) { ctx.strokeStyle = '#3f8a34'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(R.ax, R.ay); ctx.stroke(); return; }
   const d = dist(x, y, R.ax, R.ay), slack = Math.max(0, R.len - d);
   ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(x, y);
@@ -411,6 +431,13 @@ class Fly {
   update(dt, W) {
     this.t += dt; this.age += dt;
     if (this.mirror && this.state === 'free') { this.x = lerp(this.x, this.tx, Math.min(1, dt * 10)); this.y = lerp(this.y, this.ty, Math.min(1, dt * 10)); return; }
+    if (this.state === 'fall') {   // knocked out of the air by a water jet
+      this.vy = Math.min(this.vy + G * dt, 300); this.x += this.vx * dt; this.y += this.vy * dt;
+      if (this.y >= WATER_Y - 1) { this.y = WATER_Y - 1; this.state = 'sunk'; this.life = 6; burst(W, this.x, WATER_Y, 6, ['#ffffff', '#9ad8ff'], 40, 0.3, 160, 1); }
+      else if (platAt(this.x, this.y + 2)) { this.state = 'free'; }
+      return;
+    }
+    if (this.state === 'sunk') { this.y = WATER_Y - 1 + Math.sin(this.t * 4) * 0.5; this.life -= dt; if (this.life <= 0) this.gone = true; return; }
     if (this.state === 'reel') {
       const s = this.reeler;
       if (!s || !s.alive) { this.state = 'free'; return; }
@@ -434,7 +461,7 @@ class Fly {
     if (this.y < 26) { this.y = 26; this.heading = Math.PI / 2 + (Math.random() - 0.5); }
     if (this.y > floor) { this.y = floor; this.heading = -Math.PI / 2 + (Math.random() - 0.5); }
   }
-  draw() { if (this.heart) drawButterfly(this.x, this.y, this.id, this.life < 2 ? clamp(this.life / 2, 0, 1) : 1); else drawFly(this.x, this.y); }
+  draw() { if (this.heart) drawButterfly(this.x, this.y, this.id, this.life < 2 ? clamp(this.life / 2, 0, 1) : 1); else if (this.state === 'sunk' || this.state === 'fall') { ctx.globalAlpha = 0.8; drawFly(this.x, this.y); ctx.globalAlpha = 1; } else drawFly(this.x, this.y); }
 }
 /* Heart butterfly: +1 heart (up to max); at full health it is still used up */
 function healSpider(W, sp, x, y) {
