@@ -33,7 +33,7 @@ class World {
   localSpider() { return this.spiders.find(s => s.id === this.localId) || null; }
   targets() {
     const out = [];
-    for (const s of this.spiders) if (s.alive) out.push({ x: s.x, y: s.y, r: s.r, vx: s.vx, vy: s.vy, id: s.id, ref: s, local: true });
+    for (const s of this.spiders) if (s.alive) { const st = s.state === 'stuck', tg = st ? tangentOf(s) : null; out.push({ x: s.x, y: s.y, r: s.r, vx: st ? tg.x * s.sv : s.vx, vy: st ? tg.y * s.sv : s.vy, id: s.id, ref: s, local: true }); }
     if (this.authority) for (const s of this.remotes.values()) if (s.alive && s.x > -50) out.push({ x: s.x, y: s.y, r: s.r, vx: s.vx, vy: s.vy, id: s.id, ref: s, local: false });
     return out;
   }
@@ -136,16 +136,18 @@ class World {
     for (const s of this.enemyShots) {
       s.life -= dt;
       s.x += s.vx * dt; s.y += s.vy * dt;
+      if (s.kind === 'jet') { s.vy += 150 * dt; if (Math.random() < 0.9) this.particles.push({ x: s.x, y: s.y, vx: (Math.random() - 0.5) * 20, vy: 10, life: 0.3, max: 0.3, color: pick(Math.random, ['#9ad8ff', '#ffffff', '#5ab0e8']), size: 1, grav: 200 }); if (s.vy > 0 && s.y > WATER_Y + 2) { s.life = 0; burst(this, s.x, WATER_Y, 5, ['#ffffff', '#9ad8ff'], 40, 0.3, 200, 1); continue; } }
       if (s.kind === 'fire') { s.vy += 60 * dt; if (Math.random() < 0.7) this.particles.push({ x: s.x, y: s.y, vx: 0, vy: -10, life: 0.25, max: 0.25, color: pick(Math.random, ['#ff8a00', '#ffe45c']), size: 2, grav: 0 }); }
       const p = platAt(s.x, s.y);
       if (p) {
         s.life = 0;
         if (s.kind === 'fire') { if (this.authority) this.fire.ignite(p, s.x - s.vx * 0.02, s.y - s.vy * 0.02, this); burst(this, s.x, s.y, 6, ['#ff8a00', '#ffe45c'], 50, 0.3); }
+        else if (s.kind === 'jet') burst(this, s.x, s.y, 8, ['#ffffff', '#9ad8ff', '#5ab0e8'], 60, 0.35, 200);
         else burst(this, s.x, s.y, 8, ['#ffffff', '#cccccc'], 40, 0.4);
         continue;
       }
       if (!this.authority) continue;
-      for (const t of this.targets()) if (dist(s.x, s.y, t.x, t.y) < t.r + 4) { s.life = 0; this.hurt(t, s.kind === 'fire' ? 'fire' : 'stun', s.src || s); burst(this, s.x, s.y, 8, s.kind === 'fire' ? ['#ff8a00', '#ffe45c'] : ['#ffffff'], 60, 0.4); break; }
+      for (const t of this.targets()) if (dist(s.x, s.y, t.x, t.y) < t.r + 4) { s.life = 0; this.hurt(t, s.kind === 'fire' ? 'fire' : s.kind === 'jet' ? 'knock' : 'stun', s.kind === 'jet' ? s : s.src || s); burst(this, s.x, s.y, 8, s.kind === 'fire' ? ['#ff8a00', '#ffe45c'] : s.kind === 'jet' ? ['#ffffff', '#9ad8ff', '#5ab0e8'] : ['#ffffff'], 60, 0.4); break; }
     }
     this.enemyShots = this.enemyShots.filter(s => s.life > 0);
   }
@@ -164,6 +166,7 @@ class World {
     ctx.translate(OX, OY);
     for (const p of PLATS) if (p.dyn) drawDynPlatform(p, this.time);
     drawWheat(this.L, T, false);
+    if (this.L.pond) { drawPondPlants(this.L, T, false); drawPondUnder(this.L, T); }
     this.drawAmbient();
     this.fire.draw();
     for (const f of this.flies) f.draw();
@@ -178,12 +181,14 @@ class World {
     if (this.mode === 'vs') for (const s of this.allSpiders()) this.drawNameTag(s);
     for (const s of this.enemyShots) {
       if (s.kind === 'fire') { pxCircle(ctx, s.x, s.y, 3, '#ff6a00'); pxCircle(ctx, s.x, s.y, 2, '#ffe45c'); }
+      else if (s.kind === 'jet') { const m = Math.hypot(s.vx, s.vy) || 1; for (let k = 0; k < 4; k++) { ctx.fillStyle = k ? '#9ad8ff' : '#ffffff'; ctx.fillRect(Math.round(s.x - s.vx / m * k * 3) - 1, Math.round(s.y - s.vy / m * k * 3) - 1, k ? 2 : 3, k ? 2 : 3); } }
       else { pxCircle(ctx, s.x, s.y, 3, '#e8e8f0'); ctx.fillStyle = '#ffffff'; ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 2, 2); }
     }
     for (const p of this.particles) { ctx.globalAlpha = clamp(p.life / p.max * 1.5, 0, 1); ctx.fillStyle = p.color; ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size); }
     ctx.globalAlpha = 1;
-    drawWater(this.L, T);
+    drawWater(this.L, T, this);
     drawWheat(this.L, T, true);
+    if (this.L.pond) drawPondPlants(this.L, T, true);
     for (const f of this.floaters) { ctx.globalAlpha = clamp(f.life * 2, 0, 1); drawText(f.text, f.x, f.y, 1, f.color, 'center', '#140c26'); }
     ctx.globalAlpha = 1;
     // mouse crosshair

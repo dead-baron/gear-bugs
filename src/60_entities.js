@@ -59,7 +59,7 @@ class SpiderBody {
     // Break free of webs by mashing
     if (this.stunT > 0) { this.stunT -= dt; if (c.mash) { this.stunT -= 0.16 * c.mash; SFX.play('mash'); burst(W, this.x, this.y, 2, ['#ffffff'], 40, 0.25, 50, 1); } if (this.stunT <= 0) { this.stunT = 0; SFX.play('free'); burst(W, this.x, this.y, 10, ['#ffffff', '#dfe8f5'], 70, 0.4); } }
     if (this.frozenT > 0) { this.frozenT -= dt; if (c.mash) { this.frozenT -= 0.1 * c.mash; SFX.play('mash'); } if (this.frozenT <= 0) { this.frozenT = 0; SFX.play('free'); burst(W, this.x, this.y, 10, ['#ffffff'], 70, 0.4); } }
-    const lock = this.immobile;
+    const lock = this.immobile || this.knocked;
     const ctl = lock ? NO_CONTROLS : c;
     const speedMul = this.slowT > 0 ? 0.55 : 1;
 
@@ -127,7 +127,8 @@ class SpiderBody {
 
   updateAir(dt, c, W, speedMul) {
     const max = SP.AIR_MAX * speedMul;
-    if (Math.abs(c.mx) > 0.15) {
+    if (this.knocked) { /* knocked by a water jet: no steering, just momentum + gravity */ }
+    else if (Math.abs(c.mx) > 0.15) {
       const target = c.mx * max;
       // never bleed off momentum faster than max from a sprint-jump / swing release
       if (!(Math.abs(this.vx) > max && Math.sign(this.vx) === Math.sign(c.mx))) this.vx = approach(this.vx, target, SP.AIR_ACC * dt);
@@ -193,6 +194,7 @@ class SpiderBody {
   }
   land(hit, W) {
     const vx = this.vx, vy = this.vy;
+    if (this.knocked) { this.knocked = false; this.pauseT = 1.0; SFX.play('stuck'); floater(W, this.x, this.y - 16, 'DAZED!', '#9ad8ff'); burst(W, this.x, this.y, 6, ['#9ad8ff', '#ffffff'], 40, 0.3); }
     attachTo(this, hit);
     this.state = 'stuck'; this.rope = null; this.lockDir = null;
     // keep momentum along the new surface (slide on landing)
@@ -245,6 +247,17 @@ class SpiderBody {
   applyHurt(kind, src, W) {
     if (!this.alive) return;
     if (kind === 'stun') { if (this.invuln > 0.8) return; this.stunT = W.D.stun; if (this.state === 'rope') { this.state = 'air'; this.rope = null; } SFX.play('stuck'); floater(W, this.x, this.y - 16, 'WEBBED! MASH!', '#ffffff'); return; }
+    if (kind === 'knock') {
+      // a water jet knocks the spider loose: it keeps whatever momentum it had and falls
+      if (this.invuln > 0.6 || this.knocked) return;
+      let vx = this.vx, vy = this.vy;
+      if (this.state === 'stuck') { const t = tangentOf(this); vx = t.x * this.sv; vy = t.y * this.sv; this.noStickPlat = this.plat; this.noStickT = 0.2; }
+      const m = src && src.vx !== undefined ? Math.hypot(src.vx, src.vy) || 1 : 1;
+      if (src && src.vx !== undefined) { vx += src.vx / m * 60; vy += src.vy / m * 60; }
+      this.state = 'air'; this.plat = null; this.rope = null; this.vx = vx; this.vy = vy; this.knocked = true; this.invuln = Math.max(this.invuln, 0.8);
+      SFX.play('splash'); floater(W, this.x, this.y - 16, 'SPLASH!', '#9ad8ff'); burst(W, this.x, this.y, 12, ['#ffffff', '#9ad8ff', '#5ab0e8'], 80, 0.4);
+      return;
+    }
     if (this.invuln > 0) return;
     if (kind === 'kill') { this.die(W, 'bite', src && src.slot !== undefined ? src.slot : -1); SFX.play('bite'); return; }
     this.hp--;
@@ -262,7 +275,7 @@ class SpiderBody {
     if (!this.alive) return;
     this.alive = false; this.hp = 0; this.deadT = 0; this.cause = cause; this.killedBy = by;
     this.state = 'air'; this.rope = null; this.vy = -220; this.vx = (Math.random() - 0.5) * 120;
-    this.frozenT = 0; this.stunT = 0;
+    this.frozenT = 0; this.stunT = 0; this.knocked = false;
     SFX.play('death');
     burst(W, this.x, this.y, 16, ['#ff5a7a', '#ffffff', SPIDER_COLORS[this.style.c % 6].light], 120, 0.7);
     if (W.rules.onSpiderDead) W.rules.onSpiderDead(this, cause, by);
@@ -573,7 +586,7 @@ class Lizard extends Enemy {
   cancelAttacks() { this.windup = 0; this.tongueT = -1; this.breathT = 0; }
   mirrorStep(dt, W) {
     this.glide(dt);
-    const h = headFrom(this);
+    const h = headFrom(this, this.headLen);
     this.headWorld = h.fwd + this.headRel;
     this.mouthX = h.x + Math.cos(this.headWorld) * 8; this.mouthY = h.y + Math.sin(this.headWorld) * 8;
     if (this.breathT > 0) for (let i = 0; i < 2; i++) { const a = this.headWorld + (Math.random() - 0.5) * 0.7, s = 110 + Math.random() * 80; W.particles.push({ x: this.mouthX, y: this.mouthY, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.4, max: 0.4, color: pick(Math.random, ['#ff2d00', '#ff8a00', '#ffe45c']), size: 2, grav: -60 }); }
@@ -616,7 +629,7 @@ class Lizard extends Enemy {
     this.tongue(dt, W, t, D.windup, 2.2 / D.aggro);
   }
   aimHead(dt, t, frozen) {
-    const h = headFrom(this);
+    const h = headFrom(this, this.headLen);
     let rel;
     if (this.tongueT >= 0) rel = clamp(angDiff(h.fwd, this.tongueAng), -1.3, 1.3);
     else if (t && !frozen && dist(h.x, h.y, t.x, t.y) < 160) rel = clamp(angDiff(h.fwd, Math.atan2(t.y - h.y, t.x - h.x)), -1.3, 1.3);

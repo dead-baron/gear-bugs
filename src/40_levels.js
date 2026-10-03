@@ -23,6 +23,9 @@ const BIOMES = [
   { key: 'desert', name: 'DESERT ANTHILL', enemy: 'queen', npc: 'QUEEN ANT',
     sky: ['#3f8fd6', '#55a0dc', '#6eb1e0', '#8bc0df', '#a9cbd8', '#c8d2c8', '#e2d6b2', '#f2d9a0'],
     far: ['#d9a06a', '#e8b27a'], near: ['#c98a52', '#dba062'], bush: ['#9a8a4a', '#b8a860'], sun: '#fff1b0' },
+  { key: 'pond', name: 'LILY POND', enemy: 'frog', npc: 'BULLFROG',
+    sky: ['#6fb8e8', '#7cc0ea', '#8cc9ec', '#9ed2ee', '#b1dbef', '#c4e3ee', '#d6eaea', '#e4efe2'],
+    far: ['#8fc98a', '#a3d89a'], near: ['#5fae58', '#74c26a'], bush: ['#3f9a44', '#5fbf52'], sun: '#fff6c0' },
 ];
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
@@ -85,6 +88,15 @@ function generateLevel(biomeIdx, seed) {
     P.push(mkPlat(624, -400, 120, 720, 'fwall'));
     P.push(mkPlat(-400, -400, 1440, 416, 'ceiling'));
     L.movers = [];
+  } else if (biomeIdx === 6) {
+    // pond: muddy banks on both sides, open water between them
+    const lx = randInt(r, 110, 140), rx = randInt(r, 500, 530);
+    L.water = { y: 288 };
+    ground = mkPlat(-400, 274, lx + 400, 300, 'bank'); P.push(ground);
+    P.push(mkPlat(rx, 274, 1040 - rx, 300, 'bank'));
+    L.pond = { x0: lx, x1: rx };
+    L.movers = [];
+    spawnXs = [60, 580, 96, 544];
   } else {
     // desert: rising sand floor between two sandstone mesas
     ground = mkPlat(-400, GROUND_Y, 1440, 240, 'sand2', { dyn: true, rising: true }); P.push(ground);
@@ -185,6 +197,19 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 150, 240), w, 10, 'girder'); }, 1);
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 100, 560), gTop - s, s, s, 'mcrate'); c.touch = [ground]; return c; }, 1);
     L.enemySpawn = { x: 470, y: 150 };
+  } else if (biomeIdx === 6) {
+    // lily pads drift and bob on the surface
+    const { x0, x1 } = L.pond, n = randInt(r, 4, 5), span = (x1 - x0) / n;
+    for (let i = 0; i < n; i++) {
+      const w = randInt(r, 30, 38), cx = x0 + (i + 0.5) * span + randInt(r, -6, 6), dx = (r() < 0.5 ? -1 : 1) * randInt(r, 5, 10);
+      const px = clamp(cx - w / 2, x0 + 4, x1 - w - 4 - Math.max(0, dx)) , y0 = L.water.y - 4;
+      const pad = mkPlat(px, y0, w, 5, 'lilypad', { dyn: true, move: { x0: px, y0, x1: clamp(px + dx, x0 + 2, x1 - w - 2), y1: y0 + 1, period: 6 + r() * 4, phase: r() }, flower: r() < 0.4 });
+      P.push(pad); L.movers.push(pad);
+    }
+    tryPlace(() => { const w = randInt(r, 64, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 70, 150), w, 10, 'leaf'); }, 2);
+    tryPlace(() => { const w = randInt(r, 56, 84); return mkPlat(xIn(w, 60, 580), randInt(r, 165, 228), w, 10, 'leaf'); }, 2);
+    tryPlace(() => { const w = randInt(r, 40, 60), h = randInt(r, 22, 34); const c = mkPlat(randInt(r, 24, Math.max(24, L.pond.x0 - w - 30)), 274 - h, w, h, 'boulder'); c.touch = [ground]; return c; }, 1);
+    L.enemySpawn = { x: L.pond.x1 + 40, y: 262 };
   } else {
     // the ant hill mound sits on the sand; its hole is where the colony pours out
     const mw = randInt(r, 92, 112), mx = randInt(r, 250, 390 - mw / 2);
@@ -202,7 +227,7 @@ function generateLevel(biomeIdx, seed) {
   let high = P.filter(p => !frame.includes(p) && p.y < 160 && !p.move).length;
   for (let t = 0; t < 60 && high < 2; t++) {
     const w = randInt(r, 60, 100);
-    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone'][biomeIdx];
+    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone', 'leaf'][biomeIdx];
     const c = mkPlat(xIn(w, 100, 540), randInt(r, 60, 150), w, 10, type);
     if (fits(c, P, null, M, reserved)) { P.push(c); high++; }
   }
@@ -212,6 +237,14 @@ function generateLevel(biomeIdx, seed) {
   // Decorative extras
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
+  if (biomeIdx === 6) {
+    const { x0, x1 } = L.pond;
+    for (const ex of [x0, x1]) for (let i = 0; i < 4; i++) L.decor.push({ k: 'cattail', x: ex + (ex === x0 ? -14 : 4) + i * 4 + Math.floor(dr() * 3), base: ex === x0 || ex === x1 ? 276 : 290, h: 30 + Math.floor(dr() * 26), ph: dr() * TAU, front: i % 2 === 0 });
+    for (let i = 0; i < 3; i++) { const cx = x0 + 40 + dr() * (x1 - x0 - 80); for (let k = 0; k < 3; k++) L.decor.push({ k: 'cattail', x: cx + k * 4, base: 292, h: 22 + Math.floor(dr() * 20), ph: dr() * TAU, front: k === 1 }); }
+    for (let x = -20; x < 660; x += 5 + Math.floor(dr() * 6)) if (x < x0 - 4 || x > x1 + 4) L.decor.push({ k: 'grass', x, h: 6 + Math.floor(dr() * 10), ph: dr() * TAU, front: dr() < 0.4 });
+    for (let i = 0; i < 26; i++) L.decor.push({ k: 'weed', x: x0 + 8 + dr() * (x1 - x0 - 16), h: 10 + Math.floor(dr() * 22), ph: dr() * TAU });
+    for (let i = 0; i < 40; i++) L.decor.push({ k: 'pebble', x: x0 + dr() * (x1 - x0), y: 344 + dr() * 14, c: pick(dr, ['#7a6a4a', '#9a8a6a', '#5a4a32']) });
+  }
   if (biomeIdx === 5) { for (let i = 0; i < 260; i++) L.decor.push({ k: 'grain', x: -60 + dr() * 760, y: 150 + dr() * 260, c: dr() < 0.5 ? '#c99a5a' : '#f6e0a8' }); }
   if (biomeIdx === 4) for (let i = 0; i < 5; i++) L.decor.push({ k: 'lamp', x: 60 + i * 130 + Math.floor(dr() * 30), len: 8 + Math.floor(dr() * 14) });
   if (biomeIdx === 2) for (let i = 0; i < 6; i++) L.decor.push({ k: 'shell', x: 110 + dr() * 420, c: pick(dr, ['#ffb3c1', '#fff3d6', '#ffd29a']) });
@@ -325,6 +358,12 @@ function buildLevelArt(L) {
   if (L.barn) drawBarnBackdrop(g, L);
   // platforms: big frame pieces first, then props
   if (L.biome === 4) drawFactoryFixtures(g, L);
+  if (L.pond) {   // the pond floor, seen through the water
+    const { x0, x1 } = L.pond, yb = BH - OY + 4;
+    g.fillStyle = '#3a4a3a'; g.fillRect(x0, L.water.y, x1 - x0, yb - L.water.y);
+    for (let x = x0; x < x1; x += 2) { const fy = Math.round(342 + Math.sin(x * 0.04) * 3 + Math.sin(x * 0.11) * 1.5); g.fillStyle = '#4a3a22'; g.fillRect(x, fy, 2, yb - fy); g.fillStyle = '#6a5a3a'; g.fillRect(x, fy, 2, 1); }
+    for (const d of L.decor) if (d.k === 'pebble') { g.fillStyle = d.c; g.fillRect(Math.round(d.x), Math.round(d.y), 3, 2); }
+  }
   const big = p => p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand' || p.type === 'floor';
   for (const p of L.plats) if (big(p) && !p.dyn) drawPlatform(g, p, L);
   for (const p of L.plats) if (!big(p) && !p.dyn) drawPlatform(g, p, L);
@@ -598,6 +637,16 @@ function drawPlatform(g, p, L) {
       g.stroke();
       break;
     }
+    case 'bank': {
+      const left = x < 0, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4, yb = BH - OY + 4;
+      g.fillStyle = '#5a3e22'; g.fillRect(xa, y, xb - xa, yb - y);
+      for (let i = 0; i < (xb - xa) * 2; i++) { g.fillStyle = r() < 0.5 ? '#4a321a' : '#6e4e2e'; g.fillRect(xa + Math.floor(r() * (xb - xa)), y + 6 + Math.floor(r() * (yb - y - 6)), 2, 1); }
+      const edge = left ? x + w - 3 : x;
+      g.fillStyle = '#3e2a14'; g.fillRect(edge, y + 4, 3, yb - y);
+      g.fillStyle = '#3fae3a'; g.fillRect(xa, y, xb - xa, 6); g.fillStyle = '#5fd24b'; g.fillRect(xa, y, xb - xa, 3); g.fillStyle = '#8ef06f'; g.fillRect(xa, y, xb - xa, 1);
+      for (let xx = xa; xx < xb; xx += 2) { g.fillStyle = '#3fae3a'; g.fillRect(xx, y + 6, 2, Math.floor(r() * 4)); }
+      break;
+    }
     case 'mesa': {
       const yTop = -OY - 4, yBot = 330, left = x < 100, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4;
       g.fillStyle = '#b8743f'; g.fillRect(xa, yTop, xb - xa, yBot - yTop);
@@ -649,8 +698,9 @@ function drawPlatform(g, p, L) {
 }
 
 /* ---------- Per-frame animated environment pieces ---------- */
-function drawWater(L, t) {
+function drawWater(L, t, W) {
   if (!L.water) return;
+  if (L.pond) { drawPondWater(L, t, W); return; }
   const wy = L.water.y, x0 = -OX - 4, x1 = BW - OX + 4, y1 = BH - OY + 4;
   ctx.fillStyle = '#1f6fb8'; ctx.fillRect(x0, wy + 3, x1 - x0, y1 - wy);
   ctx.fillStyle = '#185a99';
@@ -757,6 +807,7 @@ function drawGearShape(g, cx, cy, rr, ang, c1, c2) {
 }
 function drawDynPlatform(p, t) {
   const x = Math.round(p.x), y = Math.round(p.y), w = p.w, h = p.h;
+  if (p.type === 'lilypad') return;   // drawn on top of the water by drawPondWater
   if (p.type === 'sand2') { drawRisingSand(p, t); return; }
   if (p.type === 'mound') { drawMound(p, t); return; }
   if (p.type === 'lift') {
@@ -822,4 +873,59 @@ function drawMound(p, t) {
   const hr = burst > 0 || p.open ? 9 : 6;
   pxEllipse(ctx, cx + sh, y + 1, hr + 2, 3, '#8a5a2a');
   pxEllipse(ctx, cx + sh, y + 1, hr, 2, '#1a0e06');
+}
+
+/* ---------- Pond (level 7): plants, water surface, lily pads ---------- */
+function drawPondPlants(L, t, front) {
+  for (const d of L.decor) {
+    if (d.k === 'cattail' && !!d.front === front) {
+      const sway = Math.sin(t * 1.3 + d.ph) * 3;
+      for (let i = 0; i < d.h; i++) { ctx.fillStyle = i % 5 ? '#4f8a3a' : '#3f7a2a'; ctx.fillRect(Math.round(d.x + sway * i / d.h), d.base - i, 1, 1); }
+      const hx = Math.round(d.x + sway), hy = d.base - d.h;
+      ctx.fillStyle = '#5a3418'; ctx.fillRect(hx - 1, hy, 3, 9); ctx.fillStyle = '#7a4a24'; ctx.fillRect(hx - 1, hy + 1, 1, 7);
+      ctx.fillStyle = '#4f8a3a'; ctx.fillRect(hx, hy - 4, 1, 4);
+      const lf = Math.sin(t * 1.6 + d.ph * 2) * 2;   // a long blade leaf beside the stalk
+      for (let i = 0; i < d.h * 0.7; i++) { ctx.fillStyle = '#5fae4a'; ctx.fillRect(Math.round(d.x + 2 + (sway + lf) * i / d.h + i * 0.08), d.base - i, 1, 1); }
+    } else if (d.k === 'grass' && !!d.front === front) {
+      const sway = Math.sin(t * 2 + d.ph + d.x * 0.05) * 1.5;
+      for (let i = 0; i < d.h; i++) { ctx.fillStyle = front ? '#5fd24b' : '#3fae3a'; ctx.fillRect(Math.round(d.x + sway * i / d.h), 276 - i, 1, 1); }
+    }
+  }
+}
+function drawPondUnder(L, t) {   // swaying weeds on the pond floor (drawn before fish, under the water tint)
+  for (const d of L.decor) if (d.k === 'weed') {
+    for (let i = 0; i < d.h; i++) { const sw = Math.sin(t * 1.2 + d.ph + i * 0.18) * (i / d.h) * 4; ctx.fillStyle = i % 3 ? '#2f7a3a' : '#3f9a44'; ctx.fillRect(Math.round(d.x + sw), 346 - i, 1, 1); if (i % 6 === 3) ctx.fillRect(Math.round(d.x + sw) + 1, 346 - i, 2, 1); }
+  }
+}
+function drawPondWater(L, t, W) {
+  const wy = L.water.y, { x0, x1 } = L.pond, yb = BH - OY + 4;
+  // tinted, see-through body with depth bands
+  ctx.fillStyle = 'rgba(40,130,170,0.38)'; ctx.fillRect(x0, wy + 1, x1 - x0, yb - wy);
+  ctx.fillStyle = 'rgba(10,60,100,0.16)'; ctx.fillRect(x0, wy + 22, x1 - x0, yb - wy); ctx.fillRect(x0, wy + 44, x1 - x0, yb - wy);
+  // shimmering light lines under the surface
+  ctx.fillStyle = 'rgba(210,245,255,0.16)';
+  for (let i = 0; i < 18; i++) { const cx = x0 + ((i * 53 + t * (8 + i % 4 * 3)) % (x1 - x0)), cy = wy + 6 + (i * 23) % 50; ctx.fillRect(Math.round(cx), Math.round(cy + Math.sin(t * 2 + i) * 2), 6 + (i % 3) * 3, 1); }
+  // rippling surface line
+  for (let x = x0; x < x1; x += 2) {
+    const h = Math.round(Math.sin(x * 0.09 + t * 2.2) * 1.2 + Math.sin(x * 0.033 - t * 1.4) * 1.2);
+    ctx.fillStyle = 'rgba(60,150,200,0.7)'; ctx.fillRect(x, wy + h + 1, 2, 2);
+    ctx.fillStyle = '#c8f0ff'; ctx.fillRect(x, wy + h, 2, 1);
+  }
+  // ripple rings: around lily pads, aiming fish, and the odd random drop
+  ctx.strokeStyle = 'rgba(220,250,255,0.55)'; ctx.lineWidth = 1;
+  const ring = (cx, rr) => { ctx.beginPath(); ctx.ellipse(Math.round(cx) + 0.5, wy + 0.5, rr, Math.max(1, rr * 0.22), 0, 0, TAU); ctx.stroke(); };
+  for (const p of L.plats) if (p.type === 'lilypad') ring(p.x + p.w / 2, p.w / 2 + 3 + (Math.sin(t * 2 + p.x) + 1) * 1.5);
+  if (W) for (const e of W.enemies) if (e.type === 'archer' && e.alive && e.surfaced) { const k = (t * 1.5) % 1; ring(e.x, 4 + k * 12); }
+  for (let i = 0; i < 4; i++) { const k = (t * 0.5 + i * 0.25) % 1, cx = x0 + 20 + ((i * 97 + Math.floor(t * 0.5 + i * 0.25) * 61) % (x1 - x0 - 40)); ctx.globalAlpha = 1 - k; ring(cx, 2 + k * 14); ctx.globalAlpha = 1; }
+  // lily pads float on top of the water
+  for (const p of L.plats) if (p.type === 'lilypad') drawLilyPad(p, t);
+}
+function drawLilyPad(p, t) {
+  const cx = p.x + p.w / 2, cy = p.y + 2, rx = p.w / 2 + 2;
+  pxEllipse(ctx, cx, cy + 1, rx, 3, '#2f7a2a');
+  pxEllipse(ctx, cx, cy, rx, 3, '#4fae45');
+  pxEllipse(ctx, cx - 2, cy - 1, rx - 5, 1.5, '#6fce5a');
+  ctx.fillStyle = '#2f7a2a'; for (let i = 0; i < 3; i++) ctx.fillRect(Math.round(cx + 2 + i * 2), Math.round(cy - 2 + i), 2, 1);   // the notch
+  ctx.fillStyle = '#3f9a3a'; ctx.fillRect(Math.round(cx - rx * 0.5), Math.round(cy), Math.round(rx), 1);
+  if (p.flower) { const fx = Math.round(cx - rx * 0.4), fy = Math.round(cy - 3); ctx.fillStyle = '#ff9acb'; ctx.fillRect(fx - 2, fy, 5, 2); ctx.fillRect(fx - 1, fy - 2, 3, 2); ctx.fillStyle = '#fff3a0'; ctx.fillRect(fx, fy - 1, 1, 1); }
 }

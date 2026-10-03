@@ -19,11 +19,13 @@ const Campaign = {
     else if (level === 2) W.enemies.push(new Gecko(es.x, es.y));
     else if (level === 3) W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
     else if (level === 4) W.enemies.push(new LongLegs(es.x, es.y, W.D));
-    else W.enemies.push(new Nest(W));          // the queen arrives when the nest bursts
+    else if (level === 5) W.enemies.push(new Nest(W));          // the queen arrives when the nest bursts
+    else { W.enemies.push(new Frog(es.x, es.y, W.D)); spawnArcherFish(W); }
     this.boss = W.enemies[0];
     for (let i = 0; i < 2; i++) W.spawnFly();
     const B = BIOMES[level];
-    if (level === 5) this.banner = { text: 'LEVEL 6: ' + B.name, sub: 'CATCH 5 FLIES - THEN THE NEST BURSTS! TAKE DOWN THE QUEEN', t: 3.4, max: 3.4, color: '#ffd23f' };
+    if (level === 6) this.banner = { text: 'LEVEL 7: ' + B.name, sub: 'MIND THE ARCHER FISH! 5 FLIES, THEN WEB THE BULLFROG AGAIN AND AGAIN', t: 3.4, max: 3.4, color: '#ffd23f' };
+    else if (level === 5) this.banner = { text: 'LEVEL 6: ' + B.name, sub: 'CATCH 5 FLIES - THEN THE NEST BURSTS! TAKE DOWN THE QUEEN', t: 3.4, max: 3.4, color: '#ffd23f' };
     else this.banner = B.boss ? { text: 'BOSS: ' + B.npc, sub: 'GET 5 FLIES, THEN WEB ITS LEGS AND BITE THEM OFF', t: 3.4, max: 3.4, color: '#ff8c42' }
                          : { text: 'LEVEL ' + (level + 1) + ': ' + B.name, sub: 'CATCH 5 GOLDEN FLIES, THEN TAKE DOWN THE ' + B.npc, t: 3, max: 3, color: '#ffd23f' };
     track('game_start', { mode: 'campaign', level: level + 1, difficulty: DIFFS[diff].name });
@@ -48,6 +50,7 @@ const Campaign = {
         if (e.type === 'dll') { C.banner = e.phase === 'legs' ? { text: 'LEG WEBBED!', sub: 'BITE IT TO TEAR IT OFF!', t: 1.6, max: 1.6, color: '#ffffff' } : { text: 'BODY WEBBED!', sub: 'BITE IT!', t: 1.6, max: 1.6, color: '#ffffff' }; return; }
         C.banner = { text: e.type === 'hive' ? 'HIVE WEBBED!' : BIOMES[C.level].npc + ' STUCK!', sub: 'CRAWL OVER AND BITE IT!', t: 1.8, max: 1.8, color: '#ffffff' };
       },
+      onFlyEaten() { C.flyT = 3; },
       onBossSpawn(q) {
         C.boss = q;
         C.banner = { text: 'THE NEST BURST!', sub: 'WEB THE QUEEN ANT (CROWN), THEN BITE HER!', t: 2.8, max: 2.8, color: '#ff8c42' };
@@ -131,6 +134,8 @@ const Campaign = {
     if (this.phase === 'won') return ['LEVEL CLEAR!', '#7df06a'];
     if (this.W.starCoin) return ['GRAB THE STAR COIN!', '#ffd23f'];
     if (me.stunT > 0) return ['WEBBED! MASH BUTTONS TO BREAK FREE!', Math.floor(T * 6) % 2 ? '#ffffff' : '#ff5a7a'];
+    if (boss.type === 'frog' && boss.webLevel > 0 && boss.frozenT <= 0) return ['KEEP WEBBING THE BULLFROG!  ' + boss.webLevel + '/' + boss.need, Math.floor(T * 4) % 2 ? '#ffffff' : '#9ad0ff'];
+    if (me.knocked) return ['SPLASHED! FALLING...', '#9ad8ff'];
     if (boss.type === 'nest') {
       if (me.flies >= 3) return ['CAREFUL - THE NEST BURSTS AT 5 FLIES!', Math.floor(T * 4) % 2 ? '#ff8c42' : '#ffffff'];
       return ['CATCH 5 GOLDEN FLIES - DODGE THE ANTS', '#ffffff'];
@@ -206,6 +211,7 @@ const Overworld = {
     { x: 548, y: 122, biome: 3 },
     { x: 560, y: 272, biome: 4 },
     { x: 300, y: 296, biome: 5 },
+    { x: 100, y: 140, biome: 6 },
   ],
   cur: 0, tok: { x: 92, y: 262 }, walk: null, unlockAnim: null, map: null, mapKey: '', fog: null, puffs: [],
   enter(fromLevel, newUnlock) {
@@ -273,7 +279,7 @@ const Overworld = {
     g.fillStyle = '#9ad8ff'; for (let i = 0; i < 120; i++) g.fillRect(Math.floor(r() * BW), Math.floor(r() * BH), 3, 1);
     g.save(); g.translate(OX, OY);
     // landmass
-    const land = [[60, 270, 70], [140, 240, 80], [230, 180, 85], [320, 210, 70], [400, 240, 70], [480, 170, 70], [560, 120, 70], [600, 200, 50], [300, 290, 60], [180, 300, 60], [560, 280, 60], [490, 290, 45]];
+    const land = [[60, 270, 70], [140, 240, 80], [230, 180, 85], [320, 210, 70], [400, 240, 70], [480, 170, 70], [560, 120, 70], [600, 200, 50], [300, 290, 60], [180, 300, 60], [560, 280, 60], [490, 290, 45], [100, 140, 58], [160, 110, 40]];
     land.forEach(([x, y, rr]) => pxCircle(g, x, y + 4, rr + 4, '#e8d29a'));
     land.forEach(([x, y, rr]) => pxCircle(g, x, y, rr, '#5fbf52'));
     // biome regions
@@ -295,6 +301,11 @@ const Overworld = {
     g.fillStyle = '#9ad0ff'; g.fillRect(582, 250, 4, 4); g.fillRect(592, 250, 4, 4); g.fillRect(602, 250, 4, 4);
     g.fillStyle = '#5c6270'; g.fillRect(612, 218, 7, 46); g.fillStyle = '#c43a3a'; g.fillRect(612, 222, 7, 2);
     pxCircle(g, 616, 210, 5, '#b4bcc8'); pxCircle(g, 621, 202, 4, '#c8ccd4');
+    // pond: a round pond with lily pads and cattails
+    pxCircle(g, 100, 140, 44, '#4fae45'); pxEllipse(g, 100, 142, 32, 22, '#2a7fc9'); pxEllipse(g, 100, 140, 28, 18, '#3b97d9');
+    for (const [lx, ly] of [[86, 134], [112, 146], [96, 152]]) { pxEllipse(g, lx, ly, 4, 2, '#4fae45'); }
+    g.fillStyle = '#ff9acb'; g.fillRect(111, 144, 2, 2);
+    for (const cx of [70, 74, 128, 131]) { g.fillStyle = '#4f8a3a'; g.fillRect(cx, 118, 1, 14); g.fillStyle = '#5a3418'; g.fillRect(cx - 1, 116, 2, 5); }
     // desert: sand dunes, a mesa and the ant hill
     pxCircle(g, 300, 296, 44, '#e8c27a'); pxCircle(g, 300, 296, 34, '#f2d9a0');
     g.fillStyle = '#b8743f'; g.fillRect(262, 262, 22, 18); g.fillStyle = '#c98a52'; g.fillRect(262, 262, 22, 3);

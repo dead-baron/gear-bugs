@@ -10,14 +10,14 @@
      applied counts match. Shots replay from sh counters.
    - Positions are normalized 0..1e4 over REF_W x REF_H.
    ===================================================================== */
-const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, ant: 5, fant: 8, queen: 60, elim: 50 };
-const VS_ROUNDS = 6;                  // Field > Meadow > Island > Barn > Factory > Anthill
+const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, ant: 5, fant: 8, queen: 60, frog: 70, elim: 50 };
+const VS_ROUNDS = 7;                  // Field > Meadow > Island > Barn > Factory > Anthill > Pond
 const VS_ROUND_TIME = 100, VS_INTRO = 3.5, VS_RESULT = 5;
 const SLOT_COLORS = [0, 1, 2, 4];
 const TEAM_NAMES = ['RED TEAM', 'BLUE TEAM'], TEAM_COLORS = ['#ff4d5e', '#4da3ff'];
 const nX = x => Math.round(clamp(x, -200, REF_W + 200) / REF_W * 1e4), nY = y => Math.round(clamp(y, -200, REF_H + 200) / REF_H * 1e4);
 const dX = v => v / 1e4 * REF_W, dY = v => v / 1e4 * REF_H;
-const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6, ant: 7, fant: 8, queen: 9, nest: 10 };
+const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6, ant: 7, fant: 8, queen: 9, nest: 10, frog: 11, archer: 12 };
 const VS_DIFF = Object.assign({}, DIFFS[1], { beeMax: 2, freeze: 6 });
 
 const VS = {
@@ -26,7 +26,7 @@ const VS = {
   isHost: false, myId: 'local', mySlot: 0,
   roster: [], mode: 'ffa', phase: 'wait', rn: 0, phaseT: 0, seeds: [], countdown: -1,
   scores: [], W: null, me: null, bots: new Map(), warm: null,
-  applied: {}, appliedNpc: { h: 0, k: 0, s: 0, g: 0, f: 0 }, npcHits: {}, claims: [], processed: {}, credited: {},
+  applied: {}, appliedNpc: { h: 0, k: 0, s: 0, g: 0, f: 0, w: 0 }, npcHits: {}, claims: [], processed: {}, credited: {},
   pres: new Map(), pubT: 0, msg: '', msgT: 0, searchT: 0, botWhileWaiting: false, finalT: 0, rematchClosed: false,
   roundRes: null, respawns: [], lastPhase: '', biteCD: {}, hostId: null, banner: null, flyT: 0,
 
@@ -40,7 +40,7 @@ const VS = {
     this.W = null; this.me = null; this.bots = new Map(); this.applied = {}; this.npcHits = {}; this.claims = []; this.processed = {}; this.credited = {};
     this.pres = new Map(); this.msg = ''; this.msgT = 0; this.searchT = 0; this.botWhileWaiting = false; this.finalT = 0; this.rematchClosed = false;
     this.roundRes = null; this.respawns = []; this.biteCD = {}; this.hostId = null; this.banner = null; this.autoT = -1; this.waitStart = nowMs(); this.ready = false;
-    this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0 };
+    this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0, w: 0 };
   },
   blankScore() { return { pts: 0, fl: 0, kills: 0, npc: 0, wins: 0, rp: 0 }; },
   startQuick() {
@@ -247,7 +247,7 @@ const VS = {
     this.me = new SpiderBody(this.myId, sp.x, sp.y, { slot: this.mySlot, style: meR.eff || save.style, name: meR.name, team: this.teamOf(this.mySlot), facing: sp.x < 320 ? 1 : -1 });
     W.spiders.push(this.me); W.localId = this.myId;
     if (meR.spec) { const m = this.me; m.spectator = true; m.alive = false; m.hp = 0; m.x = -999; m.y = 9999; m.vx = m.vy = 0; }
-    this.applied = {}; this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0 }; this.claims = [];
+    this.applied = {}; this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0, w: 0 }; this.claims = [];
     this.bots = new Map();
     if (this.isHost) {
       for (const r of this.roster) if (r.bot) {
@@ -263,14 +263,15 @@ const VS = {
                            : { text: 'ROUND ' + (rn + 1) + '/' + VS_ROUNDS, sub: BIOMES[rn].name + ' - FIRST TO 5 FLIES GETS THE POWER', t: VS_INTRO, max: VS_INTRO, color: '#ffd23f' };
     SFX.play('round');
   },
-  spawnHazard(rn) {
+  spawnHazard(rn, type) {
     const W = this.W, L = W.L;
     if (rn === 0) W.enemies.push(new Lizard(320, L.spawns[0].y));
     else if (rn === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y, { invulnerable: true }));
     else if (rn === 2) W.enemies.push(new Gecko(320, L.spawns[0].y));
     else if (rn === 3) W.enemies.push(new Widow(L.enemySpawn.x, L.enemySpawn.y, { speedMul: 0.75, plat: L.enemySpawn.plat }));
     else if (rn === 4) W.enemies.push(new LongLegs(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF, { legs: 4 }));
-    else W.enemies.push(new Nest(W));     // the first player to 5 flies bursts the nest
+    else if (rn === 5) W.enemies.push(new Nest(W));     // the first player to 5 flies bursts the nest
+    else { W.enemies.push(new Frog(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF)); if (!type) spawnArcherFish(W); }
   },
   /* seconds since this round's intro began - drives the factory lifts identically for everyone */
   roundClock() { return this.phase === 'intro' ? VS_INTRO - this.phaseT : this.phase === 'play' ? VS_INTRO + VS_ROUND_TIME - this.phaseT : undefined; },
@@ -306,12 +307,13 @@ const VS = {
         if (bySlot !== undefined && bySlot >= 0) V.addPts(bySlot, VS_PTS[e.type] || 30, 'npc');
         V.respawns.push({ type: e.type, t: 10 });
       },
+      onFlyEaten() { V.flyT = 3; },
       onBeeDown(bee, S) { if (V.isHost && S && S.slot !== undefined) V.addPts(S.slot, VS_PTS[bee.type] || VS_PTS.bee, 'npc'); },
       onRemoteHurt(id, kind, src) {
         const r = V.roster.find(x => x.id === id);
         if (!r) return;
-        const h = V.npcHits[r.slot] || (V.npcHits[r.slot] = { h: 0, k: 0, s: 0, g: 0, f: 0 });
-        const key = kind === 'kill' ? 'k' : kind === 'stun' ? 's' : kind === 'sting' ? 'g' : kind === 'fire' ? 'f' : 'h';
+        const h = V.npcHits[r.slot] || (V.npcHits[r.slot] = { h: 0, k: 0, s: 0, g: 0, f: 0, w: 0 });
+        const key = kind === 'kill' ? 'k' : kind === 'stun' ? 's' : kind === 'sting' ? 'g' : kind === 'fire' ? 'f' : kind === 'knock' ? 'w' : 'h';
         const cdk = id + key;
         if (V.biteCD[cdk] && V.W.time - V.biteCD[cdk] < 1.6) return;   // mirror the victim's invulnerability window
         V.biteCD[cdk] = V.W.time;
@@ -362,7 +364,7 @@ const VS = {
       // keep flies buzzing
       if (this.W.flies.filter(f => !f.heart).length < 4) { this.flyT -= dt; if (this.flyT <= 0) { this.W.spawnFly(); this.flyT = 1.5; } }
       this.W.maybeSpawnHeart(dt, VS_ROUND_TIME - this.phaseT);
-      for (const r of this.respawns) { r.t -= dt; if (r.t <= 0) { r.done = true; this.spawnHazard(this.rn); } }
+      for (const r of this.respawns) { r.t -= dt; if (r.t <= 0) { r.done = true; this.spawnHazard(this.rn, r.type); } }
       this.respawns = this.respawns.filter(r => !r.done);
     } else if (this.phase === 'result' && this.phaseT <= 0) {
       if (this.rn < VS_ROUNDS - 1) this.beginRound(this.rn + 1);
@@ -400,7 +402,7 @@ const VS = {
     const shotA = Math.round(sp.lastShot.a * 1000);
     return {
       v: 1, on: 1, s: sp.slot, nm: sp.name, cz: [sp.style.c, sp.style.h, sp.style.p],
-      x: nX(sp.x), y: nY(sp.y), vx: Math.round(sp.vx || 0), vy: Math.round(sp.vy || 0), a: Math.round(sp.drawAngle * 100), f: sp.facing,
+      x: nX(sp.x), y: nY(sp.y), vx: Math.round(sp.state === 'stuck' ? tangentOf(sp).x * sp.sv : sp.vx || 0), vy: Math.round(sp.state === 'stuck' ? tangentOf(sp).y * sp.sv : sp.vy || 0), a: Math.round(sp.drawAngle * 100), f: sp.facing,
       st: sp.state === 'stuck' ? 's' : sp.state === 'rope' ? 'r' : 'a', al: sp.alive ? 1 : 0, hp: sp.hp,
       frz: Math.round(sp.frozenT * 10) / 10, slw: Math.round(sp.slowT * 10) / 10, stn: Math.round(sp.stunT * 10) / 10,
       sh: sp.sh, sx: nX(sp.lastShot.x), sy: nY(sp.lastShot.y), sa: shotA,
@@ -432,6 +434,8 @@ const VS = {
       w.en = this.W.enemies.filter(e => e.alive).map(e => [e.id, ENEMY_CODES[e.type], nX(e.x), nY(e.y), Math.round((e.drawAngle || 0) * 100), e.facing || 1,
         Math.round(e.frozenT * 10), (e.windup > 0 ? 1 : 0) | (e.tongueT >= 0 || e.windup > 0 || e.breathT > 0 ? 2 : 0) | (e.state === 'air' ? 4 : 0) | (e.invisible ? 8 : 0) | (e.breathT > 0 ? 16 : 0) | (e.state === 'fall' ? 32 : 0) | (e.descending ? 64 : 0),
         Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100), Math.round((e.spawnT || 0) * 10), e.netExtra ? e.netExtra() : 0]);
+      // enemy projectiles (webs, fireballs, water jets) so guests can see what's coming
+      w.es = this.W.enemyShots.map(s => [s.kind === 'jet' ? 3 : s.kind === 'fire' ? 2 : 1, nX(s.x), nY(s.y), Math.round(s.vx), Math.round(s.vy)]);
       w.b = [];
       for (const { body } of this.bots.values()) { const bp = this.presenceOf(body); bp.id = body.id; w.b.push(bp); }
       w.nh = this.npcHits;
@@ -534,7 +538,7 @@ const VS = {
       let e = W.enemies.find(q => q.netId === id);
       if (!e) {
         const x = dX(a[2]), y = dY(a[3]);
-        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : code === 7 ? new Ant(x, y, { vx: 0, vy: 0 }) : code === 8 ? new FlyingAnt(x, y, { x, y }) : code === 9 ? new Queen(x, y) : code === 10 ? new Nest(W) : new Bee(x, y, null);
+        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : code === 7 ? new Ant(x, y, { vx: 0, vy: 0 }) : code === 8 ? new FlyingAnt(x, y, { x, y }) : code === 9 ? new Queen(x, y) : code === 10 ? new Nest(W) : code === 11 ? new Frog(x, y, VS_DIFF) : code === 12 ? new ArcherFish(x, y, W.L.pond) : new Bee(x, y, null);
         e.mirror = true; e.netId = id; e.x = x; e.y = y; W.enemies.push(e);
       }
       e.tx = dX(a[2]); e.ty = dY(a[3]); e.drawAngle = a[4] / 100; e.facing = a[5]; e.frozenT = a[6] / 10;
@@ -544,6 +548,7 @@ const VS = {
       if (a[12] && e.applyNetExtra) e.applyNetExtra(a[12], W);
     }
     W.enemies = W.enemies.filter(e => eseen.has(e.netId));
+    if (w.es) W.enemyShots = w.es.map(a => ({ kind: a[0] === 3 ? 'jet' : a[0] === 2 ? 'fire' : 'web', x: dX(a[1]), y: dY(a[2]), vx: a[3], vy: a[4], life: 0.3 }));
     // bots (host-simulated) appear as remote spiders
     for (const bp of w.b || []) { this.pres.set(bp.id, bp); this.applyRemoteSpider(bp.id, bp); this.applyIncoming(bp.id, bp); if (bp.sh !== undefined) { const prev = this.botSh && this.botSh[bp.id]; if (!this.botSh) this.botSh = {}; if (prev !== undefined && bp.sh > prev) this.onFire(bp.id, bp); this.botSh[bp.id] = bp.sh; } }
     for (const id of [...W.remotes.keys()]) if (id.startsWith('bot') && !(w.b || []).some(b => b.id === id)) W.remotes.delete(id);
@@ -552,7 +557,7 @@ const VS = {
     if (nh && this.phase === 'play' && this.me) {
       const near = W.nearestEnemy ? null : null;
       const src = W.enemies.reduce((b, e) => !b || dist(e.x, e.y, this.me.x, this.me.y) < dist(b.x, b.y, this.me.x, this.me.y) ? e : b, null);
-      for (const [k, kind] of [['h', 'hit'], ['k', 'kill'], ['s', 'stun'], ['g', 'sting'], ['f', 'fire']]) {
+      for (const [k, kind] of [['h', 'hit'], ['k', 'kill'], ['s', 'stun'], ['g', 'sting'], ['f', 'fire'], ['w', 'knock']]) {
         while (this.appliedNpc[k] < (nh[k] || 0)) { this.appliedNpc[k]++; this.me.invuln = Math.min(this.me.invuln, 0); this.me.applyHurt(kind, src, W); }
       }
     }
@@ -765,7 +770,7 @@ const VS = {
     else info = 'THE MATCH CAN START ONCE A SECOND PLAYER JOINS';
     drawText(info, BW / 2, y0 + ch + 12, 1, col, 'center', '#140c26');
     if (this.sub === 'wait' && this.autoT >= 0 && this.autoT <= 10) drawText(String(Math.ceil(this.autoT)), BW / 2, y0 + ch + 26, 3, '#ffd23f', 'center', null, '#140c26');
-    drawText('6 ROUNDS, FIELD TO ANTHILL.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
+    drawText('7 ROUNDS, FIELD TO POND.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
     const rep = this.sub === 'wait' && this.net ? this.net.report() : this.searchNet ? this.searchNet.report() : '';
     drawText(rep, BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.quickButtons(), uiSel);
@@ -825,7 +830,7 @@ const VS = {
       else info = 'WAITING FOR THE HOST TO START';
       drawText(info, BW / 2, y0 + ch + 10, 1, '#ffffff', 'center', '#140c26');
     }
-    drawText('6 ROUNDS, FIELD TO ANTHILL.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
+    drawText('7 ROUNDS, FIELD TO POND.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
     if (this.net) drawText(this.net.report(), BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.lobbyButtons(), uiSel);
     if (this.msgT > 0) drawText(this.msg, BW / 2, y0 + ch + 38, 1, '#7df06a', 'center', '#140c26');
@@ -854,7 +859,7 @@ class BotBrain {
     this.lx = b.x; this.ly = b.y;
     // danger: flee hazards
     let danger = null;
-    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && e.type !== 'nest' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : e.type === 'ant' ? 26 : e.type === 'queen' ? 60 : 50)) danger = e;
+    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && e.type !== 'nest' && e.type !== 'archer' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : e.type === 'ant' ? 26 : e.type === 'queen' ? 60 : e.type === 'frog' ? 70 : 50)) danger = e;
     const rivals = W.allSpiders().filter(o => o !== b && o.alive && o.team !== b.team);
     let target = null, mode = '';
     if (b.powered) {
@@ -880,8 +885,11 @@ class BotBrain {
     // movement toward target
     let dx = target.x - b.x, dy = target.y - b.y;
     const m = Math.hypot(dx, dy) || 1;
+    const overWaterAt = (x, y) => WATER_Y < Infinity && !rayPlat(x, y, 0, 1, Math.max(4, WATER_Y - y + 2), 4);
     if (b.state === 'stuck') {
       c.mx = dx / m; c.my = dy / m;
+      // never walk off an edge into water: stop and swing across instead
+      if (WATER_Y < Infinity && b.ny < -0.5 && overWaterAt(b.x + Math.sign(c.mx) * 16, b.y)) { c.mx = 0; c.my = 0; this.stuckT += dt * 3; }
       // target far above: grapple to something above it
       if ((dy < -50 && Math.abs(dx) < 140 && this.stuckT > 0.25) || this.stuckT > 0.8) {
         if (this.shootCD <= 0) {
@@ -894,10 +902,12 @@ class BotBrain {
     } else if (b.state === 'rope') {
       this.ropeT += dt;
       c.mx = Math.sign(dx); c.my = dy < -10 ? -1 : 0;
-      if ((Math.abs(dx) < 40 && dy > -10) || this.ropeT > 1.6) { c.jump = true; this.ropeT = 0; }
+      if (((Math.abs(dx) < 40 && dy > -10) || this.ropeT > 1.6) && !overWaterAt(b.x, b.y)) { c.jump = true; this.ropeT = 0; }
     } else {
       this.ropeT = 0;
       c.mx = Math.sign(dx) * Math.min(1, Math.abs(dx) / 30);
+      // falling toward water: web onto something above to save itself
+      if (b.vy > 0 && overWaterAt(b.x + b.vx * 0.2, b.y) && this.shootCD <= 0) { c.shoot = { type: 'point', x: clamp(b.x + b.vx * 0.4, 20, 620), y: Math.max(20, b.y - 110) }; this.shootCD = 0.35; }
     }
     return c;
   }

@@ -39,11 +39,12 @@
      10_audio     Web Audio synthesized arcade SFX
      20_input     keyboard / mouse / touch / gamepad, unified actions
      30_geometry  platforms, 360-degree perimeter crawling math, LOS
-     40_levels    6 biomes, seeded level generator, cached art layers
+     40_levels    7 biomes, seeded level generator, cached art layers
      50_sprites   procedural pixel sprites (spiders, enemies, items)
      60_entities  spider physics + ropes, webs, flies, enemies, fire
      65_longlegs  level 5 boss: robot daddy long legs + rolling body
      66_ants      level 6: ant colony nest, ants, flying ants, queen
+     67_pond      level 7: archer fish + the bullfrog
      70_world     World container shared by campaign and VS
      75_campaign  campaign rules, overworld map, fog of war
      80_net       Trystero/WebRTC networking per the multiplayer spec
@@ -55,7 +56,7 @@
 /* =====================================================================
    00_CORE - constants, helpers, canvas, pixel font, save data
    ===================================================================== */
-const BUILD = '2026-10-03T19:27:01Z';            // stamped by build.py (UTC timestamp)
+const BUILD = '2026-10-03T19:48:40Z';            // stamped by build.py (UTC timestamp)
 
 // Shared reference field. Every level, physics speed and network position
 // lives in this coordinate space, so phones/tablets/widescreens play identically.
@@ -217,11 +218,11 @@ const DIFFS = [
 
 /* ---------- Persistent save data ---------- */
 const SAVE_KEY = 'gearbugs_v2';
-const NUM_LEVELS = 6;                 // Field, Meadow, Island, Barn, Factory, Desert Anthill
+const NUM_LEVELS = 7;                 // Field, Meadow, Island, Barn, Factory, Desert Anthill, Lily Pond
 const save = {
   stars: 0,                                    // star coin inventory tally (permanent)
   unlocked: [1, 1, 1, 1],                      // levels unlocked per difficulty
-  cleared: [0, 0, 0, 0].map(() => new Array(6).fill(0)),
+  cleared: [0, 0, 0, 0].map(() => new Array(NUM_LEVELS).fill(0)),
   style: { c: 0, h: 0, p: 0 },                 // spider customization
   diff: 1,
   settings: { sound: true, shake: true, aim: true, autoFull: true },
@@ -739,6 +740,9 @@ const BIOMES = [
   { key: 'desert', name: 'DESERT ANTHILL', enemy: 'queen', npc: 'QUEEN ANT',
     sky: ['#3f8fd6', '#55a0dc', '#6eb1e0', '#8bc0df', '#a9cbd8', '#c8d2c8', '#e2d6b2', '#f2d9a0'],
     far: ['#d9a06a', '#e8b27a'], near: ['#c98a52', '#dba062'], bush: ['#9a8a4a', '#b8a860'], sun: '#fff1b0' },
+  { key: 'pond', name: 'LILY POND', enemy: 'frog', npc: 'BULLFROG',
+    sky: ['#6fb8e8', '#7cc0ea', '#8cc9ec', '#9ed2ee', '#b1dbef', '#c4e3ee', '#d6eaea', '#e4efe2'],
+    far: ['#8fc98a', '#a3d89a'], near: ['#5fae58', '#74c26a'], bush: ['#3f9a44', '#5fbf52'], sun: '#fff6c0' },
 ];
 const WOOD_TYPES = new Set(['branch', 'log', 'trunk', 'trunkR', 'palm', 'frond', 'drift', 'beam', 'plank', 'loft', 'fence', 'crate', 'hay', 'barnwall']);
 const GROUND_Y = 320;
@@ -801,6 +805,15 @@ function generateLevel(biomeIdx, seed) {
     P.push(mkPlat(624, -400, 120, 720, 'fwall'));
     P.push(mkPlat(-400, -400, 1440, 416, 'ceiling'));
     L.movers = [];
+  } else if (biomeIdx === 6) {
+    // pond: muddy banks on both sides, open water between them
+    const lx = randInt(r, 110, 140), rx = randInt(r, 500, 530);
+    L.water = { y: 288 };
+    ground = mkPlat(-400, 274, lx + 400, 300, 'bank'); P.push(ground);
+    P.push(mkPlat(rx, 274, 1040 - rx, 300, 'bank'));
+    L.pond = { x0: lx, x1: rx };
+    L.movers = [];
+    spawnXs = [60, 580, 96, 544];
   } else {
     // desert: rising sand floor between two sandstone mesas
     ground = mkPlat(-400, GROUND_Y, 1440, 240, 'sand2', { dyn: true, rising: true }); P.push(ground);
@@ -901,6 +914,19 @@ function generateLevel(biomeIdx, seed) {
     tryPlace(() => { const w = randInt(r, 60, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 150, 240), w, 10, 'girder'); }, 1);
     tryPlace(() => { const s = randInt(r, 24, 32); const c = mkPlat(xIn(s, 100, 560), gTop - s, s, s, 'mcrate'); c.touch = [ground]; return c; }, 1);
     L.enemySpawn = { x: 470, y: 150 };
+  } else if (biomeIdx === 6) {
+    // lily pads drift and bob on the surface
+    const { x0, x1 } = L.pond, n = randInt(r, 4, 5), span = (x1 - x0) / n;
+    for (let i = 0; i < n; i++) {
+      const w = randInt(r, 30, 38), cx = x0 + (i + 0.5) * span + randInt(r, -6, 6), dx = (r() < 0.5 ? -1 : 1) * randInt(r, 5, 10);
+      const px = clamp(cx - w / 2, x0 + 4, x1 - w - 4 - Math.max(0, dx)) , y0 = L.water.y - 4;
+      const pad = mkPlat(px, y0, w, 5, 'lilypad', { dyn: true, move: { x0: px, y0, x1: clamp(px + dx, x0 + 2, x1 - w - 2), y1: y0 + 1, period: 6 + r() * 4, phase: r() }, flower: r() < 0.4 });
+      P.push(pad); L.movers.push(pad);
+    }
+    tryPlace(() => { const w = randInt(r, 64, 96); return mkPlat(xIn(w, 40, 600), randInt(r, 70, 150), w, 10, 'leaf'); }, 2);
+    tryPlace(() => { const w = randInt(r, 56, 84); return mkPlat(xIn(w, 60, 580), randInt(r, 165, 228), w, 10, 'leaf'); }, 2);
+    tryPlace(() => { const w = randInt(r, 40, 60), h = randInt(r, 22, 34); const c = mkPlat(randInt(r, 24, Math.max(24, L.pond.x0 - w - 30)), 274 - h, w, h, 'boulder'); c.touch = [ground]; return c; }, 1);
+    L.enemySpawn = { x: L.pond.x1 + 40, y: 262 };
   } else {
     // the ant hill mound sits on the sand; its hole is where the colony pours out
     const mw = randInt(r, 92, 112), mx = randInt(r, 250, 390 - mw / 2);
@@ -918,7 +944,7 @@ function generateLevel(biomeIdx, seed) {
   let high = P.filter(p => !frame.includes(p) && p.y < 160 && !p.move).length;
   for (let t = 0; t < 60 && high < 2; t++) {
     const w = randInt(r, 60, 100);
-    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone'][biomeIdx];
+    const type = ['ledge', 'leaf', 'drift', 'plank', 'girder', 'sandstone', 'leaf'][biomeIdx];
     const c = mkPlat(xIn(w, 100, 540), randInt(r, 60, 150), w, 10, type);
     if (fits(c, P, null, M, reserved)) { P.push(c); high++; }
   }
@@ -928,6 +954,14 @@ function generateLevel(biomeIdx, seed) {
   // Decorative extras
   const dr = rng(seed ^ 0xABCDEF);
   if (biomeIdx === 3) for (let x = -20; x < 340; x += 4 + Math.floor(dr() * 5)) L.decor.push({ k: 'wheat', x, h: 18 + Math.floor(dr() * 22), ph: dr() * TAU });
+  if (biomeIdx === 6) {
+    const { x0, x1 } = L.pond;
+    for (const ex of [x0, x1]) for (let i = 0; i < 4; i++) L.decor.push({ k: 'cattail', x: ex + (ex === x0 ? -14 : 4) + i * 4 + Math.floor(dr() * 3), base: ex === x0 || ex === x1 ? 276 : 290, h: 30 + Math.floor(dr() * 26), ph: dr() * TAU, front: i % 2 === 0 });
+    for (let i = 0; i < 3; i++) { const cx = x0 + 40 + dr() * (x1 - x0 - 80); for (let k = 0; k < 3; k++) L.decor.push({ k: 'cattail', x: cx + k * 4, base: 292, h: 22 + Math.floor(dr() * 20), ph: dr() * TAU, front: k === 1 }); }
+    for (let x = -20; x < 660; x += 5 + Math.floor(dr() * 6)) if (x < x0 - 4 || x > x1 + 4) L.decor.push({ k: 'grass', x, h: 6 + Math.floor(dr() * 10), ph: dr() * TAU, front: dr() < 0.4 });
+    for (let i = 0; i < 26; i++) L.decor.push({ k: 'weed', x: x0 + 8 + dr() * (x1 - x0 - 16), h: 10 + Math.floor(dr() * 22), ph: dr() * TAU });
+    for (let i = 0; i < 40; i++) L.decor.push({ k: 'pebble', x: x0 + dr() * (x1 - x0), y: 344 + dr() * 14, c: pick(dr, ['#7a6a4a', '#9a8a6a', '#5a4a32']) });
+  }
   if (biomeIdx === 5) { for (let i = 0; i < 260; i++) L.decor.push({ k: 'grain', x: -60 + dr() * 760, y: 150 + dr() * 260, c: dr() < 0.5 ? '#c99a5a' : '#f6e0a8' }); }
   if (biomeIdx === 4) for (let i = 0; i < 5; i++) L.decor.push({ k: 'lamp', x: 60 + i * 130 + Math.floor(dr() * 30), len: 8 + Math.floor(dr() * 14) });
   if (biomeIdx === 2) for (let i = 0; i < 6; i++) L.decor.push({ k: 'shell', x: 110 + dr() * 420, c: pick(dr, ['#ffb3c1', '#fff3d6', '#ffd29a']) });
@@ -1041,6 +1075,12 @@ function buildLevelArt(L) {
   if (L.barn) drawBarnBackdrop(g, L);
   // platforms: big frame pieces first, then props
   if (L.biome === 4) drawFactoryFixtures(g, L);
+  if (L.pond) {   // the pond floor, seen through the water
+    const { x0, x1 } = L.pond, yb = BH - OY + 4;
+    g.fillStyle = '#3a4a3a'; g.fillRect(x0, L.water.y, x1 - x0, yb - L.water.y);
+    for (let x = x0; x < x1; x += 2) { const fy = Math.round(342 + Math.sin(x * 0.04) * 3 + Math.sin(x * 0.11) * 1.5); g.fillStyle = '#4a3a22'; g.fillRect(x, fy, 2, yb - fy); g.fillStyle = '#6a5a3a'; g.fillRect(x, fy, 2, 1); }
+    for (const d of L.decor) if (d.k === 'pebble') { g.fillStyle = d.c; g.fillRect(Math.round(d.x), Math.round(d.y), 3, 2); }
+  }
   const big = p => p.type === 'ground' || p.type === 'meadow' || p.type === 'dirt' || p.type === 'sand' || p.type === 'floor';
   for (const p of L.plats) if (big(p) && !p.dyn) drawPlatform(g, p, L);
   for (const p of L.plats) if (!big(p) && !p.dyn) drawPlatform(g, p, L);
@@ -1314,6 +1354,16 @@ function drawPlatform(g, p, L) {
       g.stroke();
       break;
     }
+    case 'bank': {
+      const left = x < 0, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4, yb = BH - OY + 4;
+      g.fillStyle = '#5a3e22'; g.fillRect(xa, y, xb - xa, yb - y);
+      for (let i = 0; i < (xb - xa) * 2; i++) { g.fillStyle = r() < 0.5 ? '#4a321a' : '#6e4e2e'; g.fillRect(xa + Math.floor(r() * (xb - xa)), y + 6 + Math.floor(r() * (yb - y - 6)), 2, 1); }
+      const edge = left ? x + w - 3 : x;
+      g.fillStyle = '#3e2a14'; g.fillRect(edge, y + 4, 3, yb - y);
+      g.fillStyle = '#3fae3a'; g.fillRect(xa, y, xb - xa, 6); g.fillStyle = '#5fd24b'; g.fillRect(xa, y, xb - xa, 3); g.fillStyle = '#8ef06f'; g.fillRect(xa, y, xb - xa, 1);
+      for (let xx = xa; xx < xb; xx += 2) { g.fillStyle = '#3fae3a'; g.fillRect(xx, y + 6, 2, Math.floor(r() * 4)); }
+      break;
+    }
     case 'mesa': {
       const yTop = -OY - 4, yBot = 330, left = x < 100, xa = left ? -OX - 4 : x, xb = left ? x + w : BW - OX + 4;
       g.fillStyle = '#b8743f'; g.fillRect(xa, yTop, xb - xa, yBot - yTop);
@@ -1365,8 +1415,9 @@ function drawPlatform(g, p, L) {
 }
 
 /* ---------- Per-frame animated environment pieces ---------- */
-function drawWater(L, t) {
+function drawWater(L, t, W) {
   if (!L.water) return;
+  if (L.pond) { drawPondWater(L, t, W); return; }
   const wy = L.water.y, x0 = -OX - 4, x1 = BW - OX + 4, y1 = BH - OY + 4;
   ctx.fillStyle = '#1f6fb8'; ctx.fillRect(x0, wy + 3, x1 - x0, y1 - wy);
   ctx.fillStyle = '#185a99';
@@ -1473,6 +1524,7 @@ function drawGearShape(g, cx, cy, rr, ang, c1, c2) {
 }
 function drawDynPlatform(p, t) {
   const x = Math.round(p.x), y = Math.round(p.y), w = p.w, h = p.h;
+  if (p.type === 'lilypad') return;   // drawn on top of the water by drawPondWater
   if (p.type === 'sand2') { drawRisingSand(p, t); return; }
   if (p.type === 'mound') { drawMound(p, t); return; }
   if (p.type === 'lift') {
@@ -1538,6 +1590,61 @@ function drawMound(p, t) {
   const hr = burst > 0 || p.open ? 9 : 6;
   pxEllipse(ctx, cx + sh, y + 1, hr + 2, 3, '#8a5a2a');
   pxEllipse(ctx, cx + sh, y + 1, hr, 2, '#1a0e06');
+}
+
+/* ---------- Pond (level 7): plants, water surface, lily pads ---------- */
+function drawPondPlants(L, t, front) {
+  for (const d of L.decor) {
+    if (d.k === 'cattail' && !!d.front === front) {
+      const sway = Math.sin(t * 1.3 + d.ph) * 3;
+      for (let i = 0; i < d.h; i++) { ctx.fillStyle = i % 5 ? '#4f8a3a' : '#3f7a2a'; ctx.fillRect(Math.round(d.x + sway * i / d.h), d.base - i, 1, 1); }
+      const hx = Math.round(d.x + sway), hy = d.base - d.h;
+      ctx.fillStyle = '#5a3418'; ctx.fillRect(hx - 1, hy, 3, 9); ctx.fillStyle = '#7a4a24'; ctx.fillRect(hx - 1, hy + 1, 1, 7);
+      ctx.fillStyle = '#4f8a3a'; ctx.fillRect(hx, hy - 4, 1, 4);
+      const lf = Math.sin(t * 1.6 + d.ph * 2) * 2;   // a long blade leaf beside the stalk
+      for (let i = 0; i < d.h * 0.7; i++) { ctx.fillStyle = '#5fae4a'; ctx.fillRect(Math.round(d.x + 2 + (sway + lf) * i / d.h + i * 0.08), d.base - i, 1, 1); }
+    } else if (d.k === 'grass' && !!d.front === front) {
+      const sway = Math.sin(t * 2 + d.ph + d.x * 0.05) * 1.5;
+      for (let i = 0; i < d.h; i++) { ctx.fillStyle = front ? '#5fd24b' : '#3fae3a'; ctx.fillRect(Math.round(d.x + sway * i / d.h), 276 - i, 1, 1); }
+    }
+  }
+}
+function drawPondUnder(L, t) {   // swaying weeds on the pond floor (drawn before fish, under the water tint)
+  for (const d of L.decor) if (d.k === 'weed') {
+    for (let i = 0; i < d.h; i++) { const sw = Math.sin(t * 1.2 + d.ph + i * 0.18) * (i / d.h) * 4; ctx.fillStyle = i % 3 ? '#2f7a3a' : '#3f9a44'; ctx.fillRect(Math.round(d.x + sw), 346 - i, 1, 1); if (i % 6 === 3) ctx.fillRect(Math.round(d.x + sw) + 1, 346 - i, 2, 1); }
+  }
+}
+function drawPondWater(L, t, W) {
+  const wy = L.water.y, { x0, x1 } = L.pond, yb = BH - OY + 4;
+  // tinted, see-through body with depth bands
+  ctx.fillStyle = 'rgba(40,130,170,0.38)'; ctx.fillRect(x0, wy + 1, x1 - x0, yb - wy);
+  ctx.fillStyle = 'rgba(10,60,100,0.16)'; ctx.fillRect(x0, wy + 22, x1 - x0, yb - wy); ctx.fillRect(x0, wy + 44, x1 - x0, yb - wy);
+  // shimmering light lines under the surface
+  ctx.fillStyle = 'rgba(210,245,255,0.16)';
+  for (let i = 0; i < 18; i++) { const cx = x0 + ((i * 53 + t * (8 + i % 4 * 3)) % (x1 - x0)), cy = wy + 6 + (i * 23) % 50; ctx.fillRect(Math.round(cx), Math.round(cy + Math.sin(t * 2 + i) * 2), 6 + (i % 3) * 3, 1); }
+  // rippling surface line
+  for (let x = x0; x < x1; x += 2) {
+    const h = Math.round(Math.sin(x * 0.09 + t * 2.2) * 1.2 + Math.sin(x * 0.033 - t * 1.4) * 1.2);
+    ctx.fillStyle = 'rgba(60,150,200,0.7)'; ctx.fillRect(x, wy + h + 1, 2, 2);
+    ctx.fillStyle = '#c8f0ff'; ctx.fillRect(x, wy + h, 2, 1);
+  }
+  // ripple rings: around lily pads, aiming fish, and the odd random drop
+  ctx.strokeStyle = 'rgba(220,250,255,0.55)'; ctx.lineWidth = 1;
+  const ring = (cx, rr) => { ctx.beginPath(); ctx.ellipse(Math.round(cx) + 0.5, wy + 0.5, rr, Math.max(1, rr * 0.22), 0, 0, TAU); ctx.stroke(); };
+  for (const p of L.plats) if (p.type === 'lilypad') ring(p.x + p.w / 2, p.w / 2 + 3 + (Math.sin(t * 2 + p.x) + 1) * 1.5);
+  if (W) for (const e of W.enemies) if (e.type === 'archer' && e.alive && e.surfaced) { const k = (t * 1.5) % 1; ring(e.x, 4 + k * 12); }
+  for (let i = 0; i < 4; i++) { const k = (t * 0.5 + i * 0.25) % 1, cx = x0 + 20 + ((i * 97 + Math.floor(t * 0.5 + i * 0.25) * 61) % (x1 - x0 - 40)); ctx.globalAlpha = 1 - k; ring(cx, 2 + k * 14); ctx.globalAlpha = 1; }
+  // lily pads float on top of the water
+  for (const p of L.plats) if (p.type === 'lilypad') drawLilyPad(p, t);
+}
+function drawLilyPad(p, t) {
+  const cx = p.x + p.w / 2, cy = p.y + 2, rx = p.w / 2 + 2;
+  pxEllipse(ctx, cx, cy + 1, rx, 3, '#2f7a2a');
+  pxEllipse(ctx, cx, cy, rx, 3, '#4fae45');
+  pxEllipse(ctx, cx - 2, cy - 1, rx - 5, 1.5, '#6fce5a');
+  ctx.fillStyle = '#2f7a2a'; for (let i = 0; i < 3; i++) ctx.fillRect(Math.round(cx + 2 + i * 2), Math.round(cy - 2 + i), 2, 1);   // the notch
+  ctx.fillStyle = '#3f9a3a'; ctx.fillRect(Math.round(cx - rx * 0.5), Math.round(cy), Math.round(rx), 1);
+  if (p.flower) { const fx = Math.round(cx - rx * 0.4), fy = Math.round(cy - 3); ctx.fillStyle = '#ff9acb'; ctx.fillRect(fx - 2, fy, 5, 2); ctx.fillRect(fx - 1, fy - 2, 3, 2); ctx.fillStyle = '#fff3a0'; ctx.fillRect(fx, fy - 1, 1, 1); }
 }
 
 /* ===== 50_sprites.js ===== */
@@ -1904,7 +2011,7 @@ class SpiderBody {
     // Break free of webs by mashing
     if (this.stunT > 0) { this.stunT -= dt; if (c.mash) { this.stunT -= 0.16 * c.mash; SFX.play('mash'); burst(W, this.x, this.y, 2, ['#ffffff'], 40, 0.25, 50, 1); } if (this.stunT <= 0) { this.stunT = 0; SFX.play('free'); burst(W, this.x, this.y, 10, ['#ffffff', '#dfe8f5'], 70, 0.4); } }
     if (this.frozenT > 0) { this.frozenT -= dt; if (c.mash) { this.frozenT -= 0.1 * c.mash; SFX.play('mash'); } if (this.frozenT <= 0) { this.frozenT = 0; SFX.play('free'); burst(W, this.x, this.y, 10, ['#ffffff'], 70, 0.4); } }
-    const lock = this.immobile;
+    const lock = this.immobile || this.knocked;
     const ctl = lock ? NO_CONTROLS : c;
     const speedMul = this.slowT > 0 ? 0.55 : 1;
 
@@ -1972,7 +2079,8 @@ class SpiderBody {
 
   updateAir(dt, c, W, speedMul) {
     const max = SP.AIR_MAX * speedMul;
-    if (Math.abs(c.mx) > 0.15) {
+    if (this.knocked) { /* knocked by a water jet: no steering, just momentum + gravity */ }
+    else if (Math.abs(c.mx) > 0.15) {
       const target = c.mx * max;
       // never bleed off momentum faster than max from a sprint-jump / swing release
       if (!(Math.abs(this.vx) > max && Math.sign(this.vx) === Math.sign(c.mx))) this.vx = approach(this.vx, target, SP.AIR_ACC * dt);
@@ -2038,6 +2146,7 @@ class SpiderBody {
   }
   land(hit, W) {
     const vx = this.vx, vy = this.vy;
+    if (this.knocked) { this.knocked = false; this.pauseT = 1.0; SFX.play('stuck'); floater(W, this.x, this.y - 16, 'DAZED!', '#9ad8ff'); burst(W, this.x, this.y, 6, ['#9ad8ff', '#ffffff'], 40, 0.3); }
     attachTo(this, hit);
     this.state = 'stuck'; this.rope = null; this.lockDir = null;
     // keep momentum along the new surface (slide on landing)
@@ -2090,6 +2199,17 @@ class SpiderBody {
   applyHurt(kind, src, W) {
     if (!this.alive) return;
     if (kind === 'stun') { if (this.invuln > 0.8) return; this.stunT = W.D.stun; if (this.state === 'rope') { this.state = 'air'; this.rope = null; } SFX.play('stuck'); floater(W, this.x, this.y - 16, 'WEBBED! MASH!', '#ffffff'); return; }
+    if (kind === 'knock') {
+      // a water jet knocks the spider loose: it keeps whatever momentum it had and falls
+      if (this.invuln > 0.6 || this.knocked) return;
+      let vx = this.vx, vy = this.vy;
+      if (this.state === 'stuck') { const t = tangentOf(this); vx = t.x * this.sv; vy = t.y * this.sv; this.noStickPlat = this.plat; this.noStickT = 0.2; }
+      const m = src && src.vx !== undefined ? Math.hypot(src.vx, src.vy) || 1 : 1;
+      if (src && src.vx !== undefined) { vx += src.vx / m * 60; vy += src.vy / m * 60; }
+      this.state = 'air'; this.plat = null; this.rope = null; this.vx = vx; this.vy = vy; this.knocked = true; this.invuln = Math.max(this.invuln, 0.8);
+      SFX.play('splash'); floater(W, this.x, this.y - 16, 'SPLASH!', '#9ad8ff'); burst(W, this.x, this.y, 12, ['#ffffff', '#9ad8ff', '#5ab0e8'], 80, 0.4);
+      return;
+    }
     if (this.invuln > 0) return;
     if (kind === 'kill') { this.die(W, 'bite', src && src.slot !== undefined ? src.slot : -1); SFX.play('bite'); return; }
     this.hp--;
@@ -2107,7 +2227,7 @@ class SpiderBody {
     if (!this.alive) return;
     this.alive = false; this.hp = 0; this.deadT = 0; this.cause = cause; this.killedBy = by;
     this.state = 'air'; this.rope = null; this.vy = -220; this.vx = (Math.random() - 0.5) * 120;
-    this.frozenT = 0; this.stunT = 0;
+    this.frozenT = 0; this.stunT = 0; this.knocked = false;
     SFX.play('death');
     burst(W, this.x, this.y, 16, ['#ff5a7a', '#ffffff', SPIDER_COLORS[this.style.c % 6].light], 120, 0.7);
     if (W.rules.onSpiderDead) W.rules.onSpiderDead(this, cause, by);
@@ -2418,7 +2538,7 @@ class Lizard extends Enemy {
   cancelAttacks() { this.windup = 0; this.tongueT = -1; this.breathT = 0; }
   mirrorStep(dt, W) {
     this.glide(dt);
-    const h = headFrom(this);
+    const h = headFrom(this, this.headLen);
     this.headWorld = h.fwd + this.headRel;
     this.mouthX = h.x + Math.cos(this.headWorld) * 8; this.mouthY = h.y + Math.sin(this.headWorld) * 8;
     if (this.breathT > 0) for (let i = 0; i < 2; i++) { const a = this.headWorld + (Math.random() - 0.5) * 0.7, s = 110 + Math.random() * 80; W.particles.push({ x: this.mouthX, y: this.mouthY, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 0.4, max: 0.4, color: pick(Math.random, ['#ff2d00', '#ff8a00', '#ffe45c']), size: 2, grav: -60 }); }
@@ -2461,7 +2581,7 @@ class Lizard extends Enemy {
     this.tongue(dt, W, t, D.windup, 2.2 / D.aggro);
   }
   aimHead(dt, t, frozen) {
-    const h = headFrom(this);
+    const h = headFrom(this, this.headLen);
     let rel;
     if (this.tongueT >= 0) rel = clamp(angDiff(h.fwd, this.tongueAng), -1.3, 1.3);
     else if (t && !frozen && dist(h.x, h.y, t.x, t.y) < 160) rel = clamp(angDiff(h.fwd, Math.atan2(t.y - h.y, t.x - h.x)), -1.3, 1.3);
@@ -3575,6 +3695,257 @@ function drawAnt(x, y, ang, facing, walk, o) {
   if (o.fire && Math.random() < 0.3) { ctx.fillStyle = '#ffe45c'; ctx.fillRect(Math.round(x + facing * 10), Math.round(y - 4), 2, 2); }
 }
 
+/* ===== 67_pond.js ===== */
+/* =====================================================================
+   67_POND - level 7: archer fish + the bullfrog
+   ---------------------------------------------------------------------
+   ArcherFish: swims under the surface. When a spider comes close it
+     rises, aims (leading the shot) and spits a water jet. A hit knocks
+     the spider loose: it falls with the momentum it had - into the water
+     means instant defeat, onto a platform means dazed for a second.
+     Fish can't be webbed; they're part of the pond.
+   Frog: big bullfrog. Walks slowly, makes huge leaps at spiders, has a
+     long tongue, and snaps up golden flies (a new one spawns later).
+     Takes several webs (it slows with each) before it's stuck; then bite.
+   ===================================================================== */
+const JET_SPEED = 340;
+
+class ArcherFish extends Enemy {
+  constructor(x, y, pond) {
+    super('archer', x, y);
+    this.r = 6; this.hitR = 0; this.pond = pond; this.st = 'swim'; this.t = Math.random() * 10;
+    this.vx = (Math.random() < 0.5 ? -1 : 1) * 26; this.depth = 18 + Math.random() * 32; this.goalX = x;
+    this.cd = 2 + Math.random() * 2; this.aimT = 0; this.surfaced = false; this.target = null;
+  }
+  webbable() { return false; }
+  biteable() { return false; }
+  update(dt, W) {
+    if (this.mirror) { this.glide(dt); this.surfaced = this.windup > 0 || this.ty < WATER_Y + 6; this.t += dt; return; }
+    const D = W.D, wy = WATER_Y, { x0, x1 } = this.pond;
+    this.t += dt; this.cd -= dt;
+    const t = W.nearestTarget(this.x, wy);
+    const near = t && t.y < wy - 4 && dist(this.x, wy, t.x, t.y) < 170 * Math.sqrt(D.aggro);
+    if (this.st === 'swim') {
+      if (Math.abs(this.goalX - this.x) < 6 || Math.random() < dt * 0.15) this.goalX = x0 + 14 + Math.random() * (x1 - x0 - 28);
+      this.vx = approach(this.vx, Math.sign(this.goalX - this.x) * 30 * D.speed, 40 * dt);
+      this.x += this.vx * dt; this.y = lerp(this.y, wy + this.depth + Math.sin(this.t * 1.7) * 3, Math.min(1, dt * 2));
+      if (Math.abs(this.vx) > 3) this.facing = Math.sign(this.vx);
+      this.drawAngle = this.vx * 0.004;
+      if (near && this.cd <= 0) { this.st = 'rise'; this.target = t; SFX.play('splash', 0.5); }
+    } else if (this.st === 'rise') {
+      // swim up beneath the spider (not straight under, so the jet arcs)
+      const tx = clamp(t ? t.x - Math.sign(t.x - this.x || 1) * 30 : this.x, x0 + 8, x1 - 8);
+      this.x = approach(this.x, tx, 60 * D.speed * dt);
+      this.y = approach(this.y, wy + 3, 70 * dt);
+      this.drawAngle += angDiff(this.drawAngle, -0.6 * this.facing) * Math.min(1, dt * 6);
+      if (!near) { this.st = 'dive'; this.cd = 1.2; }
+      else if (this.y <= wy + 3.5) { this.st = 'aim'; this.aimT = 0.55 + D.windup; this.surfaced = true; }
+    } else if (this.st === 'aim') {
+      this.aimT -= dt;
+      if (!near || !t) { this.st = 'dive'; this.surfaced = false; this.cd = 1.5; }
+      else {
+        // lead the target: where will it be when the jet arrives?
+        const mx = this.x + this.facing * 4, my = wy - 2;
+        const d0 = dist(mx, my, t.x, t.y), tof = d0 / JET_SPEED;
+        const px = t.x + (t.vx || 0) * tof * 0.9, py = t.y + (t.vy || 0) * tof * 0.9;
+        const a = Math.atan2(py - my, px - mx);
+        this.aim = { a, tof, mx, my };
+        this.facing = Math.cos(a) >= 0 ? 1 : -1;
+        this.drawAngle += angDiff(this.drawAngle, a - (this.facing < 0 ? Math.PI : 0)) * Math.min(1, dt * 10);
+        this.windup = this.aimT;
+        if (this.aimT <= 0) {
+          const g = 150, vx = Math.cos(a) * JET_SPEED, vy = Math.sin(a) * JET_SPEED - 0.5 * g * tof;   // aim a little high: the jet sags
+          W.enemyShots.push({ kind: 'jet', x: mx, y: my, vx, vy, life: 1.2, src: this });
+          SFX.play('webspit'); burst(W, mx, wy, 6, ['#ffffff', '#9ad8ff'], 40, 0.3, 160, 1);
+          this.st = 'dive'; this.windup = 0; this.cd = (3.2 + Math.random() * 2) / D.aggro;
+        }
+      }
+    } else if (this.st === 'dive') {
+      this.surfaced = false; this.windup = 0;
+      this.y = approach(this.y, wy + this.depth, 50 * dt);
+      this.drawAngle += angDiff(this.drawAngle, 0.5 * this.facing) * Math.min(1, dt * 4);
+      if (this.y >= wy + this.depth - 1) this.st = 'swim';
+    }
+    this.x = clamp(this.x, x0 + 6, x1 - 6);
+  }
+  draw(W) { if (this.alive) drawArcherFish(this.x, this.y, this.drawAngle, this.facing, this.t, { aim: this.windup > 0, hell: W.D.hell }); }
+}
+
+const frogAllow = p => p.ny < -0.5;   // the frog sits on top of things only
+class Frog extends Lizard {
+  constructor(x, y, D) {
+    super(x, y);
+    this.type = 'frog'; this.r = 10; this.hitR = 17; this.headLen = 11; this.tongueLen = 132;
+    this.need = D.hell ? 5 : D.speed > 1.1 ? 4 : D.speed < 0.9 ? 2 : 3;
+    this.webLevel = 0; this.webDecayT = 0; this.jumpCD = 2.5; this.eatCD = 4 + Math.random() * 3; this.snack = null; this.swim = false; this.hurtCD = 0; this.sac = 0;
+    const q = findCollision(x, y + 8, this.r + 10); if (q) { attachTo(this, q); this.state = 'stuck'; }
+  }
+  slowK() { return 1 - 0.7 * Math.min(1, this.webLevel / this.need); }
+  onWeb(W, S) {
+    if (!S.powered) return Enemy.prototype.onWeb.call(this, W, S);   // NO EFFECT / NEED 5 FLIES
+    if (this.frozenT > 0) { this.frozenT = Math.max(this.frozenT, W.D.freeze * 0.6); floater(W, this.x, this.y - 20, 'MORE WEB!', '#ffffff'); return 'freeze'; }
+    this.webLevel++; this.webDecayT = 4.5; this.cancelAttacks();
+    burst(W, this.x, this.y, 12, ['#ffffff', '#dfe8f5'], 70, 0.5);
+    if (this.webLevel >= this.need) {
+      this.frozenT = W.D.freeze; SFX.play('trap'); shake(0.15, 2);
+      floater(W, this.x, this.y - 22, 'STUCK!', '#ffffff');
+      if (W.rules.onEnemyTrapped) W.rules.onEnemyTrapped(this, S);
+      return 'freeze';
+    }
+    SFX.play('slow'); floater(W, this.x, this.y - 22, 'SLOWER! ' + this.webLevel + '/' + this.need, '#dfe8f5');
+    return 'slow';
+  }
+  cancelAttacks() { this.windup = 0; this.tongueT = -1; this.breathT = 0; this.snack = null; }
+  update(dt, W) {
+    if (this.mirror) { this.mirrorStep(dt, W); return; }
+    const D = W.D, wasFrozen = this.frozenT > 0, frozen = this.tickFrozen(dt, W);
+    if (wasFrozen && !frozen) this.webLevel = 0;
+    if (!frozen && this.webLevel > 0) { this.webDecayT -= dt; if (this.webDecayT <= 0) { this.webLevel--; this.webDecayT = 3; } }
+    const k = this.slowK(), t = W.nearestTarget(this.x, this.y), d = t ? dist(this.x, this.y, t.x, t.y) : 999;
+    this.jumpCD -= dt; this.eatCD -= dt; this.attackCD -= dt; this.hurtCD -= dt; this.sac += dt;
+    const busy = this.windup > 0 || this.tongueT >= 0 || this.breathT > 0;
+    if (this.swim) this.updateSwim(dt, W, t, k, frozen);
+    else if (this.state === 'air') {
+      crawlerFly(this, dt, frogAllow, W);
+      if (this.state === 'stuck') { SFX.play('land', 0.1); burst(W, this.x, this.y + this.r, 6, ['#5fae58', '#c8d890'], 40, 0.3, 80, 1); }
+      if (this.y + this.r * 0.4 >= WATER_Y) { this.swim = true; this.state = 'swim'; this.plat = null; this.vy = 0; this.y = WATER_Y - 3; SFX.play('splash'); burst(W, this.x, WATER_Y, 16, ['#ffffff', '#9ad8ff', '#3b97d9'], 110, 0.6, 300); }
+    } else if (!frozen && !busy && t) {
+      // a slow waddle toward the nearest spider...
+      const g = greedyDir(this, t.x, t.y, frogAllow);
+      if (g.sign && g.cur > 30) {
+        const sp = 14 * D.speed * k;
+        if (crawlMove(this, g.sign * sp * dt, frogAllow) !== 'blocked') { this.facing = g.sign; this.walk += sp * dt; }
+      }
+      // ...or a massive leap at it
+      if (this.jumpCD <= 0 && d > 70 && k > 0.35) {
+        jumpToward(this, t.x + (t.vx || 0) * 0.3, t.y - 6, 560 * k, 0.6, 1.25, 290);
+        this.jumpCD = (3.5 + Math.random() * 2) / D.aggro; SFX.play('jump');
+        this.facing = t.x > this.x ? 1 : -1;
+      }
+      // snack time: snap up a golden fly
+      if (this.eatCD <= 0 && this.state === 'stuck') {
+        const f = W.flies.filter(f => f.state === 'free' && !f.heart && dist(this.mouthX, this.mouthY, f.x, f.y) < this.tongueLen && lineOfSight(this.mouthX, this.mouthY, f.x, f.y)).sort((a, b) => dist(this.x, this.y, a.x, a.y) - dist(this.x, this.y, b.x, b.y))[0];
+        if (f) { this.snack = f; this.windup = 0.28; this.eatCD = (6 + Math.random() * 4) / Math.sqrt(D.aggro); }
+        else this.eatCD = 1;
+      }
+      if (!this.windup && this.attackCD <= 0 && this.state === 'stuck' && d < this.tongueLen + 6 && lineOfSight(this.mouthX, this.mouthY, t.x, t.y)) {
+        this.snack = null; this.windup = D.windup + 0.25; this.attackCD = 2.6 / D.aggro; SFX.play('windup');
+      }
+    }
+    if (this.state === 'stuck') {
+      syncStuck(this);
+      if (t && !busy) { const tg = tangentOf(this), dd = (t.x - this.x) * tg.x + (t.y - this.y) * tg.y; if (Math.abs(dd) > 8) this.facing = Math.sign(dd); }
+    }
+    const target = this.state === 'stuck' ? Math.atan2(this.ny, this.nx) + Math.PI / 2 : this.swim ? 0 : Math.atan2(this.vy, Math.abs(this.vx) + 1) * 0.35;
+    this.drawAngle += angDiff(this.drawAngle, target) * Math.min(1, dt * 10);
+    this.aimHead(dt, this.snack && this.snack.state === 'free' ? { x: this.snack.x, y: this.snack.y } : t, frozen);
+    if (frozen) { this.windup = 0; this.tongueT = -1; return; }
+    this.frogTongue(dt, W, t);
+    if (this.state === 'stuck' && t) { const h = headFrom(this, 11); hellBreath(this, W, dt, h.x, h.y, Math.atan2(t.y - h.y, t.x - h.x), t); }
+    // squashing landing / body slam
+    if (this.hurtCD <= 0 && (this.state === 'air' || this.swim)) for (const tg of W.targets()) if (dist(this.x, this.y, tg.x, tg.y) < this.r + tg.r) { W.hurt(tg, 'hit', this); this.hurtCD = 1; }
+  }
+  updateSwim(dt, W, t, k, frozen) {
+    this.y = WATER_Y - 3 + Math.sin(T * 3) * 0.8; this.vy = 0;
+    // paddle to the nearest lily pad or bank
+    let best = null, bd = Infinity;
+    for (const p of PLATS) if (p.y >= WATER_Y - 18 && p.y <= WATER_Y + 2) { const cx = clamp(this.x, p.x + 4, p.x + p.w - 4), dd = Math.abs(cx - this.x); if (dd < bd) { bd = dd; best = p; } }
+    if (!frozen && best) {
+      const cx = clamp(this.x, best.x + 4, best.x + best.w - 4);
+      this.x = approach(this.x, cx, 45 * W.D.speed * k * dt); this.facing = cx > this.x ? 1 : cx < this.x ? -1 : this.facing; this.walk += dt * 20;
+      if (Math.abs(cx - this.x) < 1) { this.swim = false; this.x = cx; this.y = best.y - this.r; attachTo(this, best); this.state = 'stuck'; this.jumpCD = Math.min(this.jumpCD, 1.2); }
+    }
+    if (!frozen && t && this.jumpCD <= 0 && k > 0.35) { this.swim = false; jumpToward(this, t.x, t.y - 6, 520 * k, 0.6, 1.2, 280); this.y -= 4; this.jumpCD = (3.5 + Math.random() * 2) / W.D.aggro; SFX.play('splash'); }
+  }
+  frogTongue(dt, W, t) {
+    if (this.windup > 0) {
+      this.windup -= dt;
+      if (this.windup <= 0) {
+        const aim = this.snack && this.snack.state === 'free' ? this.snack : t;
+        this.tongueT = 0; this.tongueHit = false; this.tongueAng = aim ? Math.atan2(aim.y - this.mouthY, aim.x - this.mouthX) : this.headWorld; SFX.play('tongue');
+      }
+    } else if (this.tongueT >= 0) {
+      this.tongueT += dt;
+      const ext = this.tongueExt(), ex = this.mouthX + Math.cos(this.tongueAng) * ext, ey = this.mouthY + Math.sin(this.tongueAng) * ext;
+      if (!this.tongueHit) for (const tg of W.targets()) if (segCircle(this.mouthX, this.mouthY, ex, ey, tg.x, tg.y, tg.r - 1)) { this.tongueHit = true; W.hurt(tg, 'hit', this); break; }
+      for (const f of W.flies) if (f.state === 'free' && !f.heart && dist(ex, ey, f.x, f.y) < 9) {
+        W.flies.splice(W.flies.indexOf(f), 1);
+        floater(W, f.x, f.y - 10, 'GULP! FLY STOLEN', '#ff8c42'); SFX.play('bite'); burst(W, f.x, f.y, 8, ['#ffd23f', '#fff3a0'], 50, 0.3);
+        if (W.rules.onFlyEaten) W.rules.onFlyEaten(f);
+        break;
+      }
+      if (this.tongueT >= 0.5) { this.tongueT = -1; this.snack = null; }
+    }
+  }
+  tongueExt() { if (this.mirror) return this.netExt || 0; return this.tongueT >= 0 ? Math.sin(Math.PI * clamp(this.tongueT / 0.5, 0, 1)) * this.tongueLen : 0; }
+  netExtra() { return [this.webLevel, this.need, this.swim ? 1 : 0]; }
+  applyNetExtra(a) { this.webLevel = a[0]; this.need = a[1]; this.swim = !!a[2]; }
+  burstColors() { return ['#3f9a3a', '#c8d890', '#ffd23f', '#ffffff']; }
+  draw(W) {
+    if (!this.alive) return;
+    const o = { air: this.state === 'air' && !this.swim, swim: this.swim, frozen: this.frozenT > 0, shiver: this.frozenT > 0 && this.frozenT < 1.5, webK: this.frozenT > 0 ? 1 : this.webLevel / this.need,
+      mouthOpen: this.windup > 0 || this.tongueT >= 0 || this.breathT > 0, flash: this.windup > 0 && !this.snack && Math.floor(T * 20) % 2 === 0, hell: W.D.hell, sac: Math.sin(this.sac * 3) };
+    drawFrog(this.x, this.y, this.drawAngle, this.facing, this.walk, o);
+    drawTongue(this);
+    this.drawFreezeBar(W);
+  }
+}
+
+/* Archer fish: silver body, black bands, pointed snout */
+function drawArcherFish(x, y, ang, facing, t, o) {
+  ctx.save(); ctx.translate(Math.round(x), Math.round(y)); ctx.rotate(ang); ctx.scale(facing, 1);
+  const tail = Math.sin(t * (o.aim ? 4 : 9)) * 2;
+  ctx.fillStyle = '#8a9aa8'; ctx.fillRect(-11, -3 + Math.round(tail * 0.5), 3, 6); ctx.fillRect(-12, -4 + Math.round(tail), 2, 3); ctx.fillRect(-12, 1 + Math.round(tail), 2, 3);
+  pxEllipse(ctx, -1, 0, 8, 4, '#5a6a7a');
+  pxEllipse(ctx, -1, -1, 7, 3, '#e8eef4');
+  ctx.fillStyle = '#c8d4e0'; ctx.fillRect(-6, 1, 11, 2);
+  ctx.fillStyle = '#1a1a22'; for (const bx of [-6, -2, 2]) { ctx.fillRect(bx, -4, 2, 4 + (bx === 2 ? 1 : 2)); }
+  ctx.fillStyle = '#e8eef4'; ctx.fillRect(6, -1, 3, 2); ctx.fillStyle = '#5a6a7a'; ctx.fillRect(9, 0, 1, 1);
+  ctx.fillStyle = o.hell ? '#ff2d2d' : '#ffd23f'; ctx.fillRect(4, -2, 2, 2); ctx.fillStyle = '#000'; ctx.fillRect(5, -2, 1, 1);
+  ctx.fillStyle = '#ffd23f'; ctx.fillRect(-4, -5, 4, 1);   // dorsal fin
+  ctx.restore();
+  if (o.aim && Math.floor(T * 10) % 2) { ctx.fillStyle = '#ffffff'; ctx.fillRect(Math.round(x) - 1, Math.round(y) - 9, 3, 1); }
+}
+
+/* Bullfrog: big green frog, gold-ringed eyes, pale belly, throat sac */
+function drawFrog(x, y, ang, facing, walk, o) {
+  ctx.save(); ctx.translate(Math.round(x + (o.shiver ? Math.sin(T * 60) : 0)), Math.round(y)); ctx.rotate(ang); ctx.scale(facing, 1);
+  const dk = o.hell ? '#3a2a1a' : '#2f6a24', md = o.hell ? '#6a3a1a' : '#4f9a3a', lt = o.hell ? '#9a5a2a' : '#7cc25a';
+  if (o.air) {   // legs stretched out behind in a leap
+    ctx.fillStyle = dk; ctx.fillRect(-18, 2, 10, 3); ctx.fillRect(-22, 4, 5, 2); ctx.fillRect(4, 5, 6, 2);
+  } else {
+    pxEllipse(ctx, -8, 5, 6, 4, dk); pxEllipse(ctx, -8, 4, 5, 3, md);    // folded back leg
+    ctx.fillStyle = dk; ctx.fillRect(-14, 8, 6, 2); ctx.fillRect(5, 6, 2, 4); ctx.fillRect(4, 9, 4, 1);
+  }
+  pxEllipse(ctx, -1, 1, 12, 7, dk);
+  pxEllipse(ctx, -1, 0, 11, 6, md);
+  pxEllipse(ctx, -3, -2, 7, 3, lt);
+  ctx.fillStyle = dk; for (const [sx, sy] of [[-7, -1], [-2, 2], [3, -2], [-9, 3]]) ctx.fillRect(sx, sy, 2, 1);   // spots
+  pxEllipse(ctx, 3, 4, 7, 2.5, '#e0e8b0');                                       // belly
+  const sac = Math.max(0, o.sac || 0);
+  if (sac > 0.2 && !o.mouthOpen) pxEllipse(ctx, 8, 5, 3 + sac * 2, 2 + sac * 2, '#f0f0c0');   // throat sac puffs
+  // head + eyes on top
+  pxEllipse(ctx, 7, -2, 5, 4, md);
+  pxCircle(ctx, 5, -6, 3, dk); pxCircle(ctx, 5, -6, 2, '#e8c040'); ctx.fillStyle = '#000'; ctx.fillRect(5, -7, 1, 2);
+  if (o.hell) { ctx.fillStyle = '#ff2d2d'; ctx.fillRect(4, -7, 2, 2); }
+  ctx.fillStyle = dk; ctx.fillRect(7, 1, 6, 1);                                  // mouth line
+  if (o.mouthOpen) { ctx.fillStyle = '#8a1a2a'; ctx.fillRect(8, 0, 5, 3); }
+  if (o.flash) { ctx.fillStyle = '#ffffff'; ctx.fillRect(5, -10, 1, 2); }
+  ctx.restore();
+  // web wrapping grows with every web
+  if (o.webK > 0) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1;
+    const n = Math.ceil(o.webK * 6);
+    for (let i = 0; i < n; i++) { const a = i * 1.1 + 0.3; ctx.beginPath(); ctx.moveTo(x + Math.cos(a) * 13, y + Math.sin(a) * 9); ctx.lineTo(x - Math.cos(a + 1) * 13, y - Math.sin(a + 1) * 9); ctx.stroke(); }
+    if (o.frozen) { ctx.globalAlpha = 0.4; pxEllipse(ctx, x, y, 14, 10, '#ffffff'); ctx.globalAlpha = 1; }
+  }
+}
+
+function spawnArcherFish(W) {
+  const pond = W.L.pond, D = W.D, n = D.speed < 0.9 ? 2 : D.hell ? 4 : 3;
+  for (let i = 0; i < n; i++) W.enemies.push(new ArcherFish(pond.x0 + (i + 0.5) * (pond.x1 - pond.x0) / n, WATER_Y + 30, pond));
+}
+
 /* ===== 70_world.js ===== */
 /* =====================================================================
    70_WORLD - the simulation container shared by campaign, VS and warm-up
@@ -3611,7 +3982,7 @@ class World {
   localSpider() { return this.spiders.find(s => s.id === this.localId) || null; }
   targets() {
     const out = [];
-    for (const s of this.spiders) if (s.alive) out.push({ x: s.x, y: s.y, r: s.r, vx: s.vx, vy: s.vy, id: s.id, ref: s, local: true });
+    for (const s of this.spiders) if (s.alive) { const st = s.state === 'stuck', tg = st ? tangentOf(s) : null; out.push({ x: s.x, y: s.y, r: s.r, vx: st ? tg.x * s.sv : s.vx, vy: st ? tg.y * s.sv : s.vy, id: s.id, ref: s, local: true }); }
     if (this.authority) for (const s of this.remotes.values()) if (s.alive && s.x > -50) out.push({ x: s.x, y: s.y, r: s.r, vx: s.vx, vy: s.vy, id: s.id, ref: s, local: false });
     return out;
   }
@@ -3714,16 +4085,18 @@ class World {
     for (const s of this.enemyShots) {
       s.life -= dt;
       s.x += s.vx * dt; s.y += s.vy * dt;
+      if (s.kind === 'jet') { s.vy += 150 * dt; if (Math.random() < 0.9) this.particles.push({ x: s.x, y: s.y, vx: (Math.random() - 0.5) * 20, vy: 10, life: 0.3, max: 0.3, color: pick(Math.random, ['#9ad8ff', '#ffffff', '#5ab0e8']), size: 1, grav: 200 }); if (s.vy > 0 && s.y > WATER_Y + 2) { s.life = 0; burst(this, s.x, WATER_Y, 5, ['#ffffff', '#9ad8ff'], 40, 0.3, 200, 1); continue; } }
       if (s.kind === 'fire') { s.vy += 60 * dt; if (Math.random() < 0.7) this.particles.push({ x: s.x, y: s.y, vx: 0, vy: -10, life: 0.25, max: 0.25, color: pick(Math.random, ['#ff8a00', '#ffe45c']), size: 2, grav: 0 }); }
       const p = platAt(s.x, s.y);
       if (p) {
         s.life = 0;
         if (s.kind === 'fire') { if (this.authority) this.fire.ignite(p, s.x - s.vx * 0.02, s.y - s.vy * 0.02, this); burst(this, s.x, s.y, 6, ['#ff8a00', '#ffe45c'], 50, 0.3); }
+        else if (s.kind === 'jet') burst(this, s.x, s.y, 8, ['#ffffff', '#9ad8ff', '#5ab0e8'], 60, 0.35, 200);
         else burst(this, s.x, s.y, 8, ['#ffffff', '#cccccc'], 40, 0.4);
         continue;
       }
       if (!this.authority) continue;
-      for (const t of this.targets()) if (dist(s.x, s.y, t.x, t.y) < t.r + 4) { s.life = 0; this.hurt(t, s.kind === 'fire' ? 'fire' : 'stun', s.src || s); burst(this, s.x, s.y, 8, s.kind === 'fire' ? ['#ff8a00', '#ffe45c'] : ['#ffffff'], 60, 0.4); break; }
+      for (const t of this.targets()) if (dist(s.x, s.y, t.x, t.y) < t.r + 4) { s.life = 0; this.hurt(t, s.kind === 'fire' ? 'fire' : s.kind === 'jet' ? 'knock' : 'stun', s.kind === 'jet' ? s : s.src || s); burst(this, s.x, s.y, 8, s.kind === 'fire' ? ['#ff8a00', '#ffe45c'] : s.kind === 'jet' ? ['#ffffff', '#9ad8ff', '#5ab0e8'] : ['#ffffff'], 60, 0.4); break; }
     }
     this.enemyShots = this.enemyShots.filter(s => s.life > 0);
   }
@@ -3742,6 +4115,7 @@ class World {
     ctx.translate(OX, OY);
     for (const p of PLATS) if (p.dyn) drawDynPlatform(p, this.time);
     drawWheat(this.L, T, false);
+    if (this.L.pond) { drawPondPlants(this.L, T, false); drawPondUnder(this.L, T); }
     this.drawAmbient();
     this.fire.draw();
     for (const f of this.flies) f.draw();
@@ -3756,12 +4130,14 @@ class World {
     if (this.mode === 'vs') for (const s of this.allSpiders()) this.drawNameTag(s);
     for (const s of this.enemyShots) {
       if (s.kind === 'fire') { pxCircle(ctx, s.x, s.y, 3, '#ff6a00'); pxCircle(ctx, s.x, s.y, 2, '#ffe45c'); }
+      else if (s.kind === 'jet') { const m = Math.hypot(s.vx, s.vy) || 1; for (let k = 0; k < 4; k++) { ctx.fillStyle = k ? '#9ad8ff' : '#ffffff'; ctx.fillRect(Math.round(s.x - s.vx / m * k * 3) - 1, Math.round(s.y - s.vy / m * k * 3) - 1, k ? 2 : 3, k ? 2 : 3); } }
       else { pxCircle(ctx, s.x, s.y, 3, '#e8e8f0'); ctx.fillStyle = '#ffffff'; ctx.fillRect(Math.round(s.x) - 1, Math.round(s.y) - 1, 2, 2); }
     }
     for (const p of this.particles) { ctx.globalAlpha = clamp(p.life / p.max * 1.5, 0, 1); ctx.fillStyle = p.color; ctx.fillRect(Math.round(p.x), Math.round(p.y), p.size, p.size); }
     ctx.globalAlpha = 1;
-    drawWater(this.L, T);
+    drawWater(this.L, T, this);
     drawWheat(this.L, T, true);
+    if (this.L.pond) drawPondPlants(this.L, T, true);
     for (const f of this.floaters) { ctx.globalAlpha = clamp(f.life * 2, 0, 1); drawText(f.text, f.x, f.y, 1, f.color, 'center', '#140c26'); }
     ctx.globalAlpha = 1;
     // mouse crosshair
@@ -3837,11 +4213,13 @@ const Campaign = {
     else if (level === 2) W.enemies.push(new Gecko(es.x, es.y));
     else if (level === 3) W.enemies.push(new Widow(es.x, es.y, { plat: es.plat }));
     else if (level === 4) W.enemies.push(new LongLegs(es.x, es.y, W.D));
-    else W.enemies.push(new Nest(W));          // the queen arrives when the nest bursts
+    else if (level === 5) W.enemies.push(new Nest(W));          // the queen arrives when the nest bursts
+    else { W.enemies.push(new Frog(es.x, es.y, W.D)); spawnArcherFish(W); }
     this.boss = W.enemies[0];
     for (let i = 0; i < 2; i++) W.spawnFly();
     const B = BIOMES[level];
-    if (level === 5) this.banner = { text: 'LEVEL 6: ' + B.name, sub: 'CATCH 5 FLIES - THEN THE NEST BURSTS! TAKE DOWN THE QUEEN', t: 3.4, max: 3.4, color: '#ffd23f' };
+    if (level === 6) this.banner = { text: 'LEVEL 7: ' + B.name, sub: 'MIND THE ARCHER FISH! 5 FLIES, THEN WEB THE BULLFROG AGAIN AND AGAIN', t: 3.4, max: 3.4, color: '#ffd23f' };
+    else if (level === 5) this.banner = { text: 'LEVEL 6: ' + B.name, sub: 'CATCH 5 FLIES - THEN THE NEST BURSTS! TAKE DOWN THE QUEEN', t: 3.4, max: 3.4, color: '#ffd23f' };
     else this.banner = B.boss ? { text: 'BOSS: ' + B.npc, sub: 'GET 5 FLIES, THEN WEB ITS LEGS AND BITE THEM OFF', t: 3.4, max: 3.4, color: '#ff8c42' }
                          : { text: 'LEVEL ' + (level + 1) + ': ' + B.name, sub: 'CATCH 5 GOLDEN FLIES, THEN TAKE DOWN THE ' + B.npc, t: 3, max: 3, color: '#ffd23f' };
     track('game_start', { mode: 'campaign', level: level + 1, difficulty: DIFFS[diff].name });
@@ -3866,6 +4244,7 @@ const Campaign = {
         if (e.type === 'dll') { C.banner = e.phase === 'legs' ? { text: 'LEG WEBBED!', sub: 'BITE IT TO TEAR IT OFF!', t: 1.6, max: 1.6, color: '#ffffff' } : { text: 'BODY WEBBED!', sub: 'BITE IT!', t: 1.6, max: 1.6, color: '#ffffff' }; return; }
         C.banner = { text: e.type === 'hive' ? 'HIVE WEBBED!' : BIOMES[C.level].npc + ' STUCK!', sub: 'CRAWL OVER AND BITE IT!', t: 1.8, max: 1.8, color: '#ffffff' };
       },
+      onFlyEaten() { C.flyT = 3; },
       onBossSpawn(q) {
         C.boss = q;
         C.banner = { text: 'THE NEST BURST!', sub: 'WEB THE QUEEN ANT (CROWN), THEN BITE HER!', t: 2.8, max: 2.8, color: '#ff8c42' };
@@ -3949,6 +4328,8 @@ const Campaign = {
     if (this.phase === 'won') return ['LEVEL CLEAR!', '#7df06a'];
     if (this.W.starCoin) return ['GRAB THE STAR COIN!', '#ffd23f'];
     if (me.stunT > 0) return ['WEBBED! MASH BUTTONS TO BREAK FREE!', Math.floor(T * 6) % 2 ? '#ffffff' : '#ff5a7a'];
+    if (boss.type === 'frog' && boss.webLevel > 0 && boss.frozenT <= 0) return ['KEEP WEBBING THE BULLFROG!  ' + boss.webLevel + '/' + boss.need, Math.floor(T * 4) % 2 ? '#ffffff' : '#9ad0ff'];
+    if (me.knocked) return ['SPLASHED! FALLING...', '#9ad8ff'];
     if (boss.type === 'nest') {
       if (me.flies >= 3) return ['CAREFUL - THE NEST BURSTS AT 5 FLIES!', Math.floor(T * 4) % 2 ? '#ff8c42' : '#ffffff'];
       return ['CATCH 5 GOLDEN FLIES - DODGE THE ANTS', '#ffffff'];
@@ -4024,6 +4405,7 @@ const Overworld = {
     { x: 548, y: 122, biome: 3 },
     { x: 560, y: 272, biome: 4 },
     { x: 300, y: 296, biome: 5 },
+    { x: 100, y: 140, biome: 6 },
   ],
   cur: 0, tok: { x: 92, y: 262 }, walk: null, unlockAnim: null, map: null, mapKey: '', fog: null, puffs: [],
   enter(fromLevel, newUnlock) {
@@ -4091,7 +4473,7 @@ const Overworld = {
     g.fillStyle = '#9ad8ff'; for (let i = 0; i < 120; i++) g.fillRect(Math.floor(r() * BW), Math.floor(r() * BH), 3, 1);
     g.save(); g.translate(OX, OY);
     // landmass
-    const land = [[60, 270, 70], [140, 240, 80], [230, 180, 85], [320, 210, 70], [400, 240, 70], [480, 170, 70], [560, 120, 70], [600, 200, 50], [300, 290, 60], [180, 300, 60], [560, 280, 60], [490, 290, 45]];
+    const land = [[60, 270, 70], [140, 240, 80], [230, 180, 85], [320, 210, 70], [400, 240, 70], [480, 170, 70], [560, 120, 70], [600, 200, 50], [300, 290, 60], [180, 300, 60], [560, 280, 60], [490, 290, 45], [100, 140, 58], [160, 110, 40]];
     land.forEach(([x, y, rr]) => pxCircle(g, x, y + 4, rr + 4, '#e8d29a'));
     land.forEach(([x, y, rr]) => pxCircle(g, x, y, rr, '#5fbf52'));
     // biome regions
@@ -4113,6 +4495,11 @@ const Overworld = {
     g.fillStyle = '#9ad0ff'; g.fillRect(582, 250, 4, 4); g.fillRect(592, 250, 4, 4); g.fillRect(602, 250, 4, 4);
     g.fillStyle = '#5c6270'; g.fillRect(612, 218, 7, 46); g.fillStyle = '#c43a3a'; g.fillRect(612, 222, 7, 2);
     pxCircle(g, 616, 210, 5, '#b4bcc8'); pxCircle(g, 621, 202, 4, '#c8ccd4');
+    // pond: a round pond with lily pads and cattails
+    pxCircle(g, 100, 140, 44, '#4fae45'); pxEllipse(g, 100, 142, 32, 22, '#2a7fc9'); pxEllipse(g, 100, 140, 28, 18, '#3b97d9');
+    for (const [lx, ly] of [[86, 134], [112, 146], [96, 152]]) { pxEllipse(g, lx, ly, 4, 2, '#4fae45'); }
+    g.fillStyle = '#ff9acb'; g.fillRect(111, 144, 2, 2);
+    for (const cx of [70, 74, 128, 131]) { g.fillStyle = '#4f8a3a'; g.fillRect(cx, 118, 1, 14); g.fillStyle = '#5a3418'; g.fillRect(cx - 1, 116, 2, 5); }
     // desert: sand dunes, a mesa and the ant hill
     pxCircle(g, 300, 296, 44, '#e8c27a'); pxCircle(g, 300, 296, 34, '#f2d9a0');
     g.fillStyle = '#b8743f'; g.fillRect(262, 262, 22, 18); g.fillStyle = '#c98a52'; g.fillRect(262, 262, 22, 3);
@@ -4238,9 +4625,9 @@ const Overworld = {
              hostleft, matched, error, status)
    ===================================================================== */
 const NET = {
-  APP_ID: 'gear-bugs-v3',          // v3: 6-round matches (older builds can't play the new rounds)
+  APP_ID: 'gear-bugs-v4',          // v4: 7-round matches (older builds can't play the new rounds)
   CODE_CHARS: 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789',
-  POOL_ROOM: 'quick-match-pool-v3',
+  POOL_ROOM: 'quick-match-pool-v4',
   TRYSTERO_URLS: ['https://cdn.jsdelivr.net/npm/trystero@0.25.4/nostr/+esm', 'https://esm.run/trystero@0.25.4'],
   RELAY_PROBES: ['wss://relay.damus.io', 'wss://nos.lol', 'wss://relay.snort.social', 'wss://nostr.mom'],
 };
@@ -4768,14 +5155,14 @@ const NetTest = {
      applied counts match. Shots replay from sh counters.
    - Positions are normalized 0..1e4 over REF_W x REF_H.
    ===================================================================== */
-const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, ant: 5, fant: 8, queen: 60, elim: 50 };
-const VS_ROUNDS = 6;                  // Field > Meadow > Island > Barn > Factory > Anthill
+const VS_PTS = { fly: 10, bee: 15, lizard: 40, gecko: 40, widow: 60, dll: 80, leg: 10, ant: 5, fant: 8, queen: 60, frog: 70, elim: 50 };
+const VS_ROUNDS = 7;                  // Field > Meadow > Island > Barn > Factory > Anthill > Pond
 const VS_ROUND_TIME = 100, VS_INTRO = 3.5, VS_RESULT = 5;
 const SLOT_COLORS = [0, 1, 2, 4];
 const TEAM_NAMES = ['RED TEAM', 'BLUE TEAM'], TEAM_COLORS = ['#ff4d5e', '#4da3ff'];
 const nX = x => Math.round(clamp(x, -200, REF_W + 200) / REF_W * 1e4), nY = y => Math.round(clamp(y, -200, REF_H + 200) / REF_H * 1e4);
 const dX = v => v / 1e4 * REF_W, dY = v => v / 1e4 * REF_H;
-const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6, ant: 7, fant: 8, queen: 9, nest: 10 };
+const ENEMY_CODES = { lizard: 1, gecko: 2, widow: 3, hive: 4, bee: 5, dll: 6, ant: 7, fant: 8, queen: 9, nest: 10, frog: 11, archer: 12 };
 const VS_DIFF = Object.assign({}, DIFFS[1], { beeMax: 2, freeze: 6 });
 
 const VS = {
@@ -4784,7 +5171,7 @@ const VS = {
   isHost: false, myId: 'local', mySlot: 0,
   roster: [], mode: 'ffa', phase: 'wait', rn: 0, phaseT: 0, seeds: [], countdown: -1,
   scores: [], W: null, me: null, bots: new Map(), warm: null,
-  applied: {}, appliedNpc: { h: 0, k: 0, s: 0, g: 0, f: 0 }, npcHits: {}, claims: [], processed: {}, credited: {},
+  applied: {}, appliedNpc: { h: 0, k: 0, s: 0, g: 0, f: 0, w: 0 }, npcHits: {}, claims: [], processed: {}, credited: {},
   pres: new Map(), pubT: 0, msg: '', msgT: 0, searchT: 0, botWhileWaiting: false, finalT: 0, rematchClosed: false,
   roundRes: null, respawns: [], lastPhase: '', biteCD: {}, hostId: null, banner: null, flyT: 0,
 
@@ -4798,7 +5185,7 @@ const VS = {
     this.W = null; this.me = null; this.bots = new Map(); this.applied = {}; this.npcHits = {}; this.claims = []; this.processed = {}; this.credited = {};
     this.pres = new Map(); this.msg = ''; this.msgT = 0; this.searchT = 0; this.botWhileWaiting = false; this.finalT = 0; this.rematchClosed = false;
     this.roundRes = null; this.respawns = []; this.biteCD = {}; this.hostId = null; this.banner = null; this.autoT = -1; this.waitStart = nowMs(); this.ready = false;
-    this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0 };
+    this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0, w: 0 };
   },
   blankScore() { return { pts: 0, fl: 0, kills: 0, npc: 0, wins: 0, rp: 0 }; },
   startQuick() {
@@ -5005,7 +5392,7 @@ const VS = {
     this.me = new SpiderBody(this.myId, sp.x, sp.y, { slot: this.mySlot, style: meR.eff || save.style, name: meR.name, team: this.teamOf(this.mySlot), facing: sp.x < 320 ? 1 : -1 });
     W.spiders.push(this.me); W.localId = this.myId;
     if (meR.spec) { const m = this.me; m.spectator = true; m.alive = false; m.hp = 0; m.x = -999; m.y = 9999; m.vx = m.vy = 0; }
-    this.applied = {}; this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0 }; this.claims = [];
+    this.applied = {}; this.appliedNpc = { h: 0, k: 0, s: 0, g: 0, f: 0, w: 0 }; this.claims = [];
     this.bots = new Map();
     if (this.isHost) {
       for (const r of this.roster) if (r.bot) {
@@ -5021,14 +5408,15 @@ const VS = {
                            : { text: 'ROUND ' + (rn + 1) + '/' + VS_ROUNDS, sub: BIOMES[rn].name + ' - FIRST TO 5 FLIES GETS THE POWER', t: VS_INTRO, max: VS_INTRO, color: '#ffd23f' };
     SFX.play('round');
   },
-  spawnHazard(rn) {
+  spawnHazard(rn, type) {
     const W = this.W, L = W.L;
     if (rn === 0) W.enemies.push(new Lizard(320, L.spawns[0].y));
     else if (rn === 1) W.enemies.push(new Hive(L.hive.x, L.hive.y, { invulnerable: true }));
     else if (rn === 2) W.enemies.push(new Gecko(320, L.spawns[0].y));
     else if (rn === 3) W.enemies.push(new Widow(L.enemySpawn.x, L.enemySpawn.y, { speedMul: 0.75, plat: L.enemySpawn.plat }));
     else if (rn === 4) W.enemies.push(new LongLegs(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF, { legs: 4 }));
-    else W.enemies.push(new Nest(W));     // the first player to 5 flies bursts the nest
+    else if (rn === 5) W.enemies.push(new Nest(W));     // the first player to 5 flies bursts the nest
+    else { W.enemies.push(new Frog(L.enemySpawn.x, L.enemySpawn.y, VS_DIFF)); if (!type) spawnArcherFish(W); }
   },
   /* seconds since this round's intro began - drives the factory lifts identically for everyone */
   roundClock() { return this.phase === 'intro' ? VS_INTRO - this.phaseT : this.phase === 'play' ? VS_INTRO + VS_ROUND_TIME - this.phaseT : undefined; },
@@ -5064,12 +5452,13 @@ const VS = {
         if (bySlot !== undefined && bySlot >= 0) V.addPts(bySlot, VS_PTS[e.type] || 30, 'npc');
         V.respawns.push({ type: e.type, t: 10 });
       },
+      onFlyEaten() { V.flyT = 3; },
       onBeeDown(bee, S) { if (V.isHost && S && S.slot !== undefined) V.addPts(S.slot, VS_PTS[bee.type] || VS_PTS.bee, 'npc'); },
       onRemoteHurt(id, kind, src) {
         const r = V.roster.find(x => x.id === id);
         if (!r) return;
-        const h = V.npcHits[r.slot] || (V.npcHits[r.slot] = { h: 0, k: 0, s: 0, g: 0, f: 0 });
-        const key = kind === 'kill' ? 'k' : kind === 'stun' ? 's' : kind === 'sting' ? 'g' : kind === 'fire' ? 'f' : 'h';
+        const h = V.npcHits[r.slot] || (V.npcHits[r.slot] = { h: 0, k: 0, s: 0, g: 0, f: 0, w: 0 });
+        const key = kind === 'kill' ? 'k' : kind === 'stun' ? 's' : kind === 'sting' ? 'g' : kind === 'fire' ? 'f' : kind === 'knock' ? 'w' : 'h';
         const cdk = id + key;
         if (V.biteCD[cdk] && V.W.time - V.biteCD[cdk] < 1.6) return;   // mirror the victim's invulnerability window
         V.biteCD[cdk] = V.W.time;
@@ -5120,7 +5509,7 @@ const VS = {
       // keep flies buzzing
       if (this.W.flies.filter(f => !f.heart).length < 4) { this.flyT -= dt; if (this.flyT <= 0) { this.W.spawnFly(); this.flyT = 1.5; } }
       this.W.maybeSpawnHeart(dt, VS_ROUND_TIME - this.phaseT);
-      for (const r of this.respawns) { r.t -= dt; if (r.t <= 0) { r.done = true; this.spawnHazard(this.rn); } }
+      for (const r of this.respawns) { r.t -= dt; if (r.t <= 0) { r.done = true; this.spawnHazard(this.rn, r.type); } }
       this.respawns = this.respawns.filter(r => !r.done);
     } else if (this.phase === 'result' && this.phaseT <= 0) {
       if (this.rn < VS_ROUNDS - 1) this.beginRound(this.rn + 1);
@@ -5158,7 +5547,7 @@ const VS = {
     const shotA = Math.round(sp.lastShot.a * 1000);
     return {
       v: 1, on: 1, s: sp.slot, nm: sp.name, cz: [sp.style.c, sp.style.h, sp.style.p],
-      x: nX(sp.x), y: nY(sp.y), vx: Math.round(sp.vx || 0), vy: Math.round(sp.vy || 0), a: Math.round(sp.drawAngle * 100), f: sp.facing,
+      x: nX(sp.x), y: nY(sp.y), vx: Math.round(sp.state === 'stuck' ? tangentOf(sp).x * sp.sv : sp.vx || 0), vy: Math.round(sp.state === 'stuck' ? tangentOf(sp).y * sp.sv : sp.vy || 0), a: Math.round(sp.drawAngle * 100), f: sp.facing,
       st: sp.state === 'stuck' ? 's' : sp.state === 'rope' ? 'r' : 'a', al: sp.alive ? 1 : 0, hp: sp.hp,
       frz: Math.round(sp.frozenT * 10) / 10, slw: Math.round(sp.slowT * 10) / 10, stn: Math.round(sp.stunT * 10) / 10,
       sh: sp.sh, sx: nX(sp.lastShot.x), sy: nY(sp.lastShot.y), sa: shotA,
@@ -5190,6 +5579,8 @@ const VS = {
       w.en = this.W.enemies.filter(e => e.alive).map(e => [e.id, ENEMY_CODES[e.type], nX(e.x), nY(e.y), Math.round((e.drawAngle || 0) * 100), e.facing || 1,
         Math.round(e.frozenT * 10), (e.windup > 0 ? 1 : 0) | (e.tongueT >= 0 || e.windup > 0 || e.breathT > 0 ? 2 : 0) | (e.state === 'air' ? 4 : 0) | (e.invisible ? 8 : 0) | (e.breathT > 0 ? 16 : 0) | (e.state === 'fall' ? 32 : 0) | (e.descending ? 64 : 0),
         Math.round((e.tongueAng || 0) * 100), e.tongueExt ? Math.round(e.tongueExt()) : 0, Math.round((e.headRel || 0) * 100), Math.round((e.spawnT || 0) * 10), e.netExtra ? e.netExtra() : 0]);
+      // enemy projectiles (webs, fireballs, water jets) so guests can see what's coming
+      w.es = this.W.enemyShots.map(s => [s.kind === 'jet' ? 3 : s.kind === 'fire' ? 2 : 1, nX(s.x), nY(s.y), Math.round(s.vx), Math.round(s.vy)]);
       w.b = [];
       for (const { body } of this.bots.values()) { const bp = this.presenceOf(body); bp.id = body.id; w.b.push(bp); }
       w.nh = this.npcHits;
@@ -5292,7 +5683,7 @@ const VS = {
       let e = W.enemies.find(q => q.netId === id);
       if (!e) {
         const x = dX(a[2]), y = dY(a[3]);
-        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : code === 7 ? new Ant(x, y, { vx: 0, vy: 0 }) : code === 8 ? new FlyingAnt(x, y, { x, y }) : code === 9 ? new Queen(x, y) : code === 10 ? new Nest(W) : new Bee(x, y, null);
+        e = code === 1 ? new Lizard(x, y) : code === 2 ? new Gecko(x, y) : code === 3 ? new Widow(x, y) : code === 4 ? new Hive(x, y, { invulnerable: true }) : code === 6 ? new LongLegs(x, y, VS_DIFF, { legs: 4 }) : code === 7 ? new Ant(x, y, { vx: 0, vy: 0 }) : code === 8 ? new FlyingAnt(x, y, { x, y }) : code === 9 ? new Queen(x, y) : code === 10 ? new Nest(W) : code === 11 ? new Frog(x, y, VS_DIFF) : code === 12 ? new ArcherFish(x, y, W.L.pond) : new Bee(x, y, null);
         e.mirror = true; e.netId = id; e.x = x; e.y = y; W.enemies.push(e);
       }
       e.tx = dX(a[2]); e.ty = dY(a[3]); e.drawAngle = a[4] / 100; e.facing = a[5]; e.frozenT = a[6] / 10;
@@ -5302,6 +5693,7 @@ const VS = {
       if (a[12] && e.applyNetExtra) e.applyNetExtra(a[12], W);
     }
     W.enemies = W.enemies.filter(e => eseen.has(e.netId));
+    if (w.es) W.enemyShots = w.es.map(a => ({ kind: a[0] === 3 ? 'jet' : a[0] === 2 ? 'fire' : 'web', x: dX(a[1]), y: dY(a[2]), vx: a[3], vy: a[4], life: 0.3 }));
     // bots (host-simulated) appear as remote spiders
     for (const bp of w.b || []) { this.pres.set(bp.id, bp); this.applyRemoteSpider(bp.id, bp); this.applyIncoming(bp.id, bp); if (bp.sh !== undefined) { const prev = this.botSh && this.botSh[bp.id]; if (!this.botSh) this.botSh = {}; if (prev !== undefined && bp.sh > prev) this.onFire(bp.id, bp); this.botSh[bp.id] = bp.sh; } }
     for (const id of [...W.remotes.keys()]) if (id.startsWith('bot') && !(w.b || []).some(b => b.id === id)) W.remotes.delete(id);
@@ -5310,7 +5702,7 @@ const VS = {
     if (nh && this.phase === 'play' && this.me) {
       const near = W.nearestEnemy ? null : null;
       const src = W.enemies.reduce((b, e) => !b || dist(e.x, e.y, this.me.x, this.me.y) < dist(b.x, b.y, this.me.x, this.me.y) ? e : b, null);
-      for (const [k, kind] of [['h', 'hit'], ['k', 'kill'], ['s', 'stun'], ['g', 'sting'], ['f', 'fire']]) {
+      for (const [k, kind] of [['h', 'hit'], ['k', 'kill'], ['s', 'stun'], ['g', 'sting'], ['f', 'fire'], ['w', 'knock']]) {
         while (this.appliedNpc[k] < (nh[k] || 0)) { this.appliedNpc[k]++; this.me.invuln = Math.min(this.me.invuln, 0); this.me.applyHurt(kind, src, W); }
       }
     }
@@ -5523,7 +5915,7 @@ const VS = {
     else info = 'THE MATCH CAN START ONCE A SECOND PLAYER JOINS';
     drawText(info, BW / 2, y0 + ch + 12, 1, col, 'center', '#140c26');
     if (this.sub === 'wait' && this.autoT >= 0 && this.autoT <= 10) drawText(String(Math.ceil(this.autoT)), BW / 2, y0 + ch + 26, 3, '#ffd23f', 'center', null, '#140c26');
-    drawText('6 ROUNDS, FIELD TO ANTHILL.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
+    drawText('7 ROUNDS, FIELD TO POND.  LATE ARRIVALS WATCH, THEN JOIN NEXT ROUND.', BW / 2, BH - 64, 1, '#bba8ff', 'center', '#140c26');
     const rep = this.sub === 'wait' && this.net ? this.net.report() : this.searchNet ? this.searchNet.report() : '';
     drawText(rep, BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.quickButtons(), uiSel);
@@ -5583,7 +5975,7 @@ const VS = {
       else info = 'WAITING FOR THE HOST TO START';
       drawText(info, BW / 2, y0 + ch + 10, 1, '#ffffff', 'center', '#140c26');
     }
-    drawText('6 ROUNDS, FIELD TO ANTHILL.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
+    drawText('7 ROUNDS, FIELD TO POND.  5 FLIES = POWER: WEB RIVALS TO FREEZE, THEN BITE.', BW / 2, y0 + ch + 24, 1, '#bba8ff', 'center', '#140c26');
     if (this.net) drawText(this.net.report(), BW / 2, BH - 52, 1, '#7a70a0', 'center');
     drawUIButtons(this.lobbyButtons(), uiSel);
     if (this.msgT > 0) drawText(this.msg, BW / 2, y0 + ch + 38, 1, '#7df06a', 'center', '#140c26');
@@ -5612,7 +6004,7 @@ class BotBrain {
     this.lx = b.x; this.ly = b.y;
     // danger: flee hazards
     let danger = null;
-    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && e.type !== 'nest' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : e.type === 'ant' ? 26 : e.type === 'queen' ? 60 : 50)) danger = e;
+    for (const e of W.enemies) if (e.alive && e.frozenT <= 0 && e.type !== 'hive' && e.type !== 'nest' && e.type !== 'archer' && dist(b.x, b.y, e.x, e.y) < (e.type === 'widow' ? 80 : e.type === 'dll' ? 90 : e.type === 'ant' ? 26 : e.type === 'queen' ? 60 : e.type === 'frog' ? 70 : 50)) danger = e;
     const rivals = W.allSpiders().filter(o => o !== b && o.alive && o.team !== b.team);
     let target = null, mode = '';
     if (b.powered) {
@@ -5638,8 +6030,11 @@ class BotBrain {
     // movement toward target
     let dx = target.x - b.x, dy = target.y - b.y;
     const m = Math.hypot(dx, dy) || 1;
+    const overWaterAt = (x, y) => WATER_Y < Infinity && !rayPlat(x, y, 0, 1, Math.max(4, WATER_Y - y + 2), 4);
     if (b.state === 'stuck') {
       c.mx = dx / m; c.my = dy / m;
+      // never walk off an edge into water: stop and swing across instead
+      if (WATER_Y < Infinity && b.ny < -0.5 && overWaterAt(b.x + Math.sign(c.mx) * 16, b.y)) { c.mx = 0; c.my = 0; this.stuckT += dt * 3; }
       // target far above: grapple to something above it
       if ((dy < -50 && Math.abs(dx) < 140 && this.stuckT > 0.25) || this.stuckT > 0.8) {
         if (this.shootCD <= 0) {
@@ -5652,10 +6047,12 @@ class BotBrain {
     } else if (b.state === 'rope') {
       this.ropeT += dt;
       c.mx = Math.sign(dx); c.my = dy < -10 ? -1 : 0;
-      if ((Math.abs(dx) < 40 && dy > -10) || this.ropeT > 1.6) { c.jump = true; this.ropeT = 0; }
+      if (((Math.abs(dx) < 40 && dy > -10) || this.ropeT > 1.6) && !overWaterAt(b.x, b.y)) { c.jump = true; this.ropeT = 0; }
     } else {
       this.ropeT = 0;
       c.mx = Math.sign(dx) * Math.min(1, Math.abs(dx) / 30);
+      // falling toward water: web onto something above to save itself
+      if (b.vy > 0 && overWaterAt(b.x + b.vx * 0.2, b.y) && this.shootCD <= 0) { c.shoot = { type: 'point', x: clamp(b.x + b.vx * 0.4, 20, 620), y: Math.max(20, b.y - 110) }; this.shootCD = 0.35; }
     }
     return c;
   }
@@ -5893,14 +6290,15 @@ Screens.practice = {
       const bandH = Math.ceil((b.h - 30) / B.sky.length);
       B.sky.forEach((c, k) => { ctx.fillStyle = c; ctx.fillRect(x, y + k * bandH, b.w, bandH); });
       const gy = y + b.h - 30;
-      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : b.card === 5 ? '#f2d9a0' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
-      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : b.card === 5 ? '#d9a866' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
+      ctx.fillStyle = b.card === 2 ? '#2a7fc9' : b.card === 3 ? '#b8862a' : b.card === 4 ? '#ffd23f' : b.card === 5 ? '#f2d9a0' : b.card === 6 ? '#9ad8ff' : '#5fd24b'; ctx.fillRect(x, gy, b.w, 4);
+      ctx.fillStyle = b.card === 2 ? '#f3dca0' : b.card === 3 ? '#7a5230' : b.card === 4 ? '#3a3f4c' : b.card === 5 ? '#d9a866' : b.card === 6 ? '#2a7fc9' : '#9c5f34'; ctx.fillRect(x, gy + 4, b.w, 26);
       const ex = x + b.w / 2, ey = gy - 8;
       if (b.card === 0) drawLizard(ex, ey + 2, 0, -1, T * 10, Math.sin(T * 2) * 0.2, {});
       else if (b.card === 1) { drawHive(ex, ey - 22, {}); drawBee(ex + 22, ey - 18 + Math.sin(T * 5) * 3, -1, {}); }
       else if (b.card === 2) drawGecko(ex, ey + 2, 0, -1, T * 14, 0, {});
       else if (b.card === 3) drawWidow(ex, ey, 0, -1, T * 10, {});
       else if (b.card === 4) drawLongLegsPreview(ex, gy, T);
+      else if (b.card === 6) { drawLilyPad({ x: ex - 16, y: gy - 3, w: 32, h: 5 }, T); drawFrog(ex, gy - 12, 0, -1, 0, { sac: Math.sin(T * 3) }); drawArcherFish(ex + 26, gy + 12, 0, -1, T, {}); }
       else { drawMound({ x: ex - 22, y: gy - 6, w: 44, h: 6, open: true }, T); drawAnt(ex + 2, gy - 11, 0, -1, T * 10, { queen: true }); drawAnt(ex - 26, gy - 3, 0, 1, T * 14, {}); drawAnt(ex + 26, gy - 3, 0, -1, T * 12, {}); }
       const nm = (b.card + 1) + '. ' + B.name, npc = B.npc.length * 6 > b.w - 4 ? B.npc.replace('DADDY ', '') : B.npc;
       drawText(nm.length * 6 > b.w - 4 ? (b.card + 1) + '. ' + B.name.split(' ').pop() : nm, ex, gy + 8, 1, '#ffffff', 'center', '#140c26');

@@ -163,11 +163,11 @@ const DIFFS = [
 
 /* ---------- Persistent save data ---------- */
 const SAVE_KEY = 'gearbugs_v2';
-const NUM_LEVELS = 6;                 // Field, Meadow, Island, Barn, Factory, Desert Anthill
+const NUM_LEVELS = 7;                 // Field, Meadow, Island, Barn, Factory, Desert Anthill, Lily Pond
 const save = {
   stars: 0,                                    // star coin inventory tally (permanent)
   unlocked: [1, 1, 1, 1],                      // levels unlocked per difficulty
-  cleared: [0, 0, 0, 0].map(() => new Array(6).fill(0)),
+  cleared: [0, 0, 0, 0].map(() => new Array(NUM_LEVELS).fill(0)),
   style: { c: 0, h: 0, p: 0 },                 // spider customization
   diff: 1,
   settings: { sound: true, shake: true, aim: true, autoFull: true },
